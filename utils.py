@@ -202,7 +202,7 @@ def get_chat_logprobs(
             )
 
             # Calculate generation logprobs
-            gen_logprobs,  = []
+            gen_logprobs = []
             # gen_top_logprobs = []
             if hasattr(gen_outputs, "scores") and gen_outputs.scores:
                 for token_idx, token_scores in enumerate(gen_outputs.scores):
@@ -228,7 +228,7 @@ def get_chat_logprobs(
             result = {
                 "tokens": generated_tokens,
                 "token_ids": generated_ids,
-                "token_logprobs": gen_logprobs,
+                "logprobs": gen_logprobs,
                 # "top_logprobs": gen_top_logprobs,
                 # "text": generated_text,  # tokenizer.decode(token_ids) +
                 "completion": generated_text,
