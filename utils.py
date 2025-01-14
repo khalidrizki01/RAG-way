@@ -3,6 +3,7 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Union, Tuple
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import re
 
 class DeviceType(Enum):
     CUDA = "cuda"
@@ -243,3 +244,70 @@ def get_chat_logprobs(
             # Clean up CUDA cache if needed
             if config.device_type == DeviceType.CUDA:
                 torch.cuda.empty_cache()
+
+def is_groundtruth_duplicated_in_generation(generation, groundtruth):
+    """
+    Mengecek apakah ada kata yang muncul lebih dari sekali dalam teks,
+    dan apakah kata tersebut juga terdapat di dalam kolom 'answer'.
+
+    Args:
+        text (str): Teks yang akan diperiksa (misalnya 'generated_completion').
+        answer (str): Jawaban ground truth dari kolom 'answer'.
+
+    Returns:
+        tuple: (has_duplicates, duplicates_in_answer, duplicate_words_list)
+            - has_duplicates (bool): True jika ada kata yang muncul lebih dari sekali.
+            - duplicates_in_answer (bool): True jika kata duplikat juga ada dalam 'answer'.
+            - duplicate_words_list (list[str]): Daftar kata yang merupakan duplikat.
+    """
+    words = re.findall(r'\w+|[^\w\s]', generation, re.UNICODE)  # Pisahkan teks menjadi kata-kata
+    word_counts = {}
+
+    # Hitung frekuensi kemunculan tiap kata
+    for word in words:
+        word_counts[word] = word_counts.get(word, 0) + 1
+
+    # Cari kata-kata yang muncul lebih dari sekali
+    duplicate_words = {word for word, count in word_counts.items() if count > 1}
+
+    # Cek apakah kata-kata duplikat ada di dalam 'answer'
+    answer_words = set(re.findall(r'\w+|[^\w\s]', groundtruth, re.UNICODE))
+    duplicate_words = duplicate_words.intersection(answer_words)  # Filter hanya kata-kata di 'answer'
+    duplicates_in_answer = len(duplicate_words) > 0
+
+    return duplicates_in_answer, list(duplicate_words)
+
+def get_w_wo_preceding_space_variants(
+    word: str, 
+    tokenizer: AutoTokenizer
+) -> list:
+    """
+    Mengembalikan variasi tokenisasi untuk sebuah kata dengan/atau tanpa spasi sebelumnya.
+    Kenapa perlu dibedakan antara yg berspasi sebelum dengan sesudah? 
+    Karena ada kasus dimana tokenizer memberikan token yang berbeda untuk kata dengan atau tanpa spasi, misal token untuk "nama" adalah 1 dan " nama" adalah 101
+    Kata tanpa spasi yang mendahuluinya pun bisa terjadi di banyak kasus, seperti ketika terletak di awal string atau jika didahului:
+    1. tanda petik ganda ( " ) atau petik tunggal ( ' )
+    2. tanda kurang ( `(` atau `[` )
+    3. tanda hubung ( - )
+    4. tanda miring ( / )
+
+    Args:
+        word (str): Kata yang akan ditokenisasi.
+        tokenizer: Tokenizer yang digunakan.
+
+    Returns:
+        list: Variasi tokenisasi kata.
+    """
+    supports_prefix_space = "add_prefix_space" in tokenizer.__call__.__code__.co_varnames
+
+    if supports_prefix_space:
+        tokenized_variants = [
+            tokenizer.encode(word, add_special_tokens=False, add_prefix_space=False),  # Tanpa spasi sebelumnya
+            tokenizer.encode(word, add_special_tokens=False, add_prefix_space=True)   # Dengan spasi sebelumnya
+        ]
+    else:
+        tokenized_variants = [
+            tokenizer.encode(word, add_special_tokens=False),  # Tanpa spasi sebelumnya
+            tokenizer.encode(" " + word, add_special_tokens=False)  # Dengan spasi sebelumnya (manual)
+        ]
+    return tokenized_variants
