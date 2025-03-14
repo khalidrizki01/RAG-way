@@ -7,6 +7,8 @@ import gc
 def summarize_top_5_combined(
     model_name: str,
     dataset,
+    query_col: str, 
+    docs_col: str, 
     model: AutoModelForCausalLM = None, 
     tokenizer: AutoTokenizer = None,
     batch_size: int = 4,
@@ -49,18 +51,14 @@ def summarize_top_5_combined(
             batch_texts = []
             for row in batch_data:
                 # Ambil teks dari kolom top_5_combined
-                top_5_text = row["top_5_combined"]
-                query = row['query']
+                top_5_text = row[docs_col]
+                query = row[query_col]
 
                 # Siapkan prompt untuk rangkuman
                 messages = [
                     {
-                        "role": "sistem",
-                        "content": "Kamu adalah asisten AI yang bertugas untuk merangkum teks panjang menjadi teks pendek yang terdiri dari 2 kalimat. Jangan tambahkan pengantar pada hasil."
-                    },
-                    {
-                        "role": "pengguna",
-                        "content": f'{top_5_text}\n\nRingkaslah teks di atas langsung tanpa tambahan pengantar agar dapat menjawab pertanyaan "{query}"'
+                        "role": "user",
+                        "content": f'{top_5_text}\n\nRingkaslah teks di atas agar dapat menjawab pertanyaan secara mendetail. Jangan berikan pengantar pada hasil. Pertanyaan: "{query}"'
                     }
                 ]
 
