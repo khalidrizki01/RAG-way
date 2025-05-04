@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional, Union, Tuple
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import re
+import gc
 
 class DeviceType(Enum):
     CUDA = "cuda"
@@ -68,10 +69,7 @@ def load_model_and_tokenizer(
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         **model_kwargs
-    )
-
-    # Place model explicitly on GPU
-    model = model.to("cuda:0")
+    ).to(config.device_type.value)
 
     return model, tokenizer, config
 
@@ -113,14 +111,15 @@ def prepare_inputs(
         text,
         return_tensors="pt",
         return_offsets_mapping=True,
-        padding=True,
-        truncation=True
+        padding=True,  # Padding di awal teks (sisi kiri)
+        truncation=True, 
+        add_special_tokens=False
     )
     
     # Remove the first token (always duplicate <|begin_of_text|>)
-    inputs['input_ids'] = inputs['input_ids'][:, 1:]
-    inputs['attention_mask'] = inputs['attention_mask'][:, 1:]
-    inputs['offset_mapping'] = inputs['offset_mapping'][:, 1:]
+    inputs['input_ids'] = inputs['input_ids']
+    inputs['attention_mask'] = inputs['attention_mask']
+    inputs['offset_mapping'] = inputs['offset_mapping']
     
     # Move tensors to appropriate device
     device = device_type.value
@@ -169,81 +168,82 @@ def get_chat_logprobs(
     # Store offset mapping and remove from inputs
     offset_mapping = inputs.pop("offset_mapping")[0]
 
-    with torch.amp.autocast('cuda:0'):
-        try:
-            token_ids = inputs["input_ids"][0]
-            
-            # Generate completion with appropriate settings
-            generation_config = {
-                "max_new_tokens": max_new_tokens,
-                "temperature": temperature,
-                "top_p": top_p,
-                "do_sample": temperature > 0,
-                "pad_token_id": tokenizer.pad_token_id,
-                "attention_mask": inputs["attention_mask"],
-                "return_dict_in_generate": True,
-                "output_scores": True
-            }
+    with torch.no_grad():
+        with torch.amp.autocast('cuda:0'):
+            try:
+                token_ids = inputs["input_ids"][0]
+                
+                # Generate completion with appropriate settings
+                generation_config = {
+                    "max_new_tokens": max_new_tokens,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "do_sample": temperature > 0,
+                    "pad_token_id": tokenizer.pad_token_id,
+                    "attention_mask": inputs["attention_mask"],
+                    "return_dict_in_generate": True,
+                    "output_scores": True
+                }
 
-            # Add device-specific settings
-            if config.device_type == DeviceType.CUDA:
-                generation_config["use_cache"] = True
+                # Add device-specific settings
+                if config.device_type == DeviceType.CUDA:
+                    generation_config["use_cache"] = True
 
-            gen_outputs = model.generate(
-                inputs["input_ids"],
-                **generation_config
-            )
+                gen_outputs = model.generate(
+                    inputs["input_ids"],
+                    **generation_config
+                )
 
-            # Process generation outputs
-            generated_ids = gen_outputs.sequences[0][len(token_ids):]
-            generated_tokens = tokenizer.convert_ids_to_tokens(generated_ids)
-            generated_text = tokenizer.decode(
-                generated_ids,
-                skip_special_tokens=True
-            )
+                # Process generation outputs
+                generated_ids = gen_outputs.sequences[0][len(token_ids):]
+                generated_tokens = tokenizer.convert_ids_to_tokens(generated_ids)
+                generated_text = tokenizer.decode(
+                    generated_ids,
+                    skip_special_tokens=True
+                )
 
-            # Calculate generation logprobs
-            gen_logprobs = []
-            # gen_top_logprobs = []
-            if hasattr(gen_outputs, "scores") and gen_outputs.scores:
-                for token_idx, token_scores in enumerate(gen_outputs.scores):
-                    if token_idx < len(generated_ids):
-                        current_token_id = generated_ids[token_idx]
-                        probs = torch.nn.functional.softmax(token_scores[0], dim=-1)
-                        log_probs = torch.log(probs)
+                # Calculate generation logprobs
+                gen_logprobs = []
+                # gen_top_logprobs = []
+                if hasattr(gen_outputs, "scores") and gen_outputs.scores:
+                    for token_idx, token_scores in enumerate(gen_outputs.scores):
+                        if token_idx < len(generated_ids):
+                            current_token_id = generated_ids[token_idx]
+                            probs = torch.nn.functional.softmax(token_scores[0], dim=-1)
+                            log_probs = torch.log(probs)
 
-                        # Get logprob for next token
-                        gen_logprobs.append(
-                            log_probs[current_token_id].item()
-                        )
+                            # Get logprob for next token
+                            gen_logprobs.append(
+                                log_probs[current_token_id].item()
+                            )
 
-                        # # Get top alternatives
-                        # top_values, top_indices = torch.topk(log_probs, 5)
-                        # top_logprobs = {
-                        #     tokenizer.decode([idx]): prob.item()
-                        #     for idx, prob in zip(top_indices, top_values)
-                        # }
-                        # gen_top_logprobs.append(top_logprobs)
+                            # # Get top alternatives
+                            # top_values, top_indices = torch.topk(log_probs, 5)
+                            # top_logprobs = {
+                            #     tokenizer.decode([idx]): prob.item()
+                            #     for idx, prob in zip(top_indices, top_values)
+                            # }
+                            # gen_top_logprobs.append(top_logprobs)
 
-            # Create final result
-            result = {
-                "tokens": generated_tokens,
-                "token_ids": generated_ids,
-                "logprobs": gen_logprobs,
-                # "top_logprobs": gen_top_logprobs,
-                # "text": generated_text,  # tokenizer.decode(token_ids) +
-                "completion": generated_text,
-                "prompt": formatted_prompt if include_prompt else None
-            }
-            return result
+                # Create final result
+                result = {
+                    "tokens": generated_tokens,
+                    "token_ids": generated_ids,
+                    "logprobs": gen_logprobs,
+                    # "top_logprobs": gen_top_logprobs,
+                    # "text": generated_text,  # tokenizer.decode(token_ids) +
+                    "completion": generated_text,
+                    "prompt": formatted_prompt if include_prompt else None
+                }
+                return result
 
-        except Exception as e:
-            raise RuntimeError(f"Error during inference: {e}")
+            except Exception as e:
+                raise RuntimeError(f"Error during inference: {e}")
 
-        finally:
-            # Clean up CUDA cache if needed
-            if config.device_type == DeviceType.CUDA:
+            finally:
+                del inputs, gen_outputs, token_ids, generated_ids, generated_tokens, generated_text, gen_logprobs
                 torch.cuda.empty_cache()
+                gc.collect()
 
 def is_groundtruth_duplicated_in_generation(generation, groundtruth):
     """
@@ -298,16 +298,20 @@ def get_w_wo_preceding_space_variants(
     Returns:
         list: Variasi tokenisasi kata.
     """
-    supports_prefix_space = "add_prefix_space" in tokenizer.__call__.__code__.co_varnames
+    try: 
+        supports_prefix_space = "add_prefix_space" in tokenizer.__call__.__code__.co_varnames
 
-    if supports_prefix_space:
-        tokenized_variants = [
-            tokenizer.encode(word, add_special_tokens=False, add_prefix_space=False),  # Tanpa spasi sebelumnya
-            tokenizer.encode(word, add_special_tokens=False, add_prefix_space=True)   # Dengan spasi sebelumnya
-        ]
-    else:
-        tokenized_variants = [
-            tokenizer.encode(word, add_special_tokens=False),  # Tanpa spasi sebelumnya
-            tokenizer.encode(" " + word, add_special_tokens=False)  # Dengan spasi sebelumnya (manual)
-        ]
-    return tokenized_variants
+        if supports_prefix_space:
+            tokenized_variants = [
+                tokenizer.encode(word, add_special_tokens=False, add_prefix_space=False),  # Tanpa spasi sebelumnya
+                tokenizer.encode(word, add_special_tokens=False, add_prefix_space=True)   # Dengan spasi sebelumnya
+            ]
+        else:
+            tokenized_variants = [
+                tokenizer.encode(word, add_special_tokens=False),  # Tanpa spasi sebelumnya
+                tokenizer.encode(" " + word, add_special_tokens=False)  # Dengan spasi sebelumnya (manual)
+            ]
+        return tokenized_variants
+    except Exception as e:
+        print(f"[ERROR] Terjadi kesalahan saat tokenisasi '{word}': {e}")
+        raise
