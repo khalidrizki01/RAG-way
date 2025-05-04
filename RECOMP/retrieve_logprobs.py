@@ -97,7 +97,7 @@ def retrieve_correct_token_logprobs(
 
     # Iterasi menggunakan iterrows
     for idx, row in data.iterrows():
-        answer = row['answer']
+        answer = row['answers']['text'][0]
         generated_token_ids = row['token_ids']
         logprobs = row['logprobs']
 

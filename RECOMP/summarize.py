@@ -74,11 +74,11 @@ def summarize_top_5_combined(
                     try:
                         summary_outputs = model.generate(
                             inputs["input_ids"],
-                            max_new_tokens=max_new_tokens,
+                            max_new_tokens=max_new_tokens,  # token hasil generasi dibatasi hingga sebanyak max_new_tokens
                             temperature=temperature,
                             top_p=1.0,
                             do_sample=temperature > 0,
-                            pad_token_id=tokenizer.pad_token_id,
+                            pad_token_id=tokenizer.pad_token_id, # Jika teks generasi kurang dari max_new_tokens, maka akan dipadding
                             return_dict_in_generate=True
                         )
 
