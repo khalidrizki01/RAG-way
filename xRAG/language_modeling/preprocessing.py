@@ -73,7 +73,7 @@ def process_finetune_dataset(split_data, query_col, answer_col, psg_col, include
         ]
         
         # Ambil background dan hitung panjangnya jika include_psg_len True
-        background = example[psg_col].split('\n\n')
+        background = example[psg_col]  # .split('\n\n')
 
         # Menambahkan data ke formatted_data
         formatted_data['background'].append(background)
@@ -98,7 +98,7 @@ def process_pretrain_dataset(split_data, psg_col):
     # Iterasi untuk setiap contoh dalam split_data
     for example in split_data:
         # Ambil background dan extend hasilnya ke dalam list of strings
-        text = example[psg_col].split('\n\n')
+        text = example[psg_col]  # .split('\n\n')
         formatted_data['text'].extend(text)  # Menggunakan extend, bukan append
     
     return formatted_data
@@ -135,20 +135,7 @@ def split_multiple_backgrounds(backgrounds, retriever_tokenizer, total_max_len, 
     
     return all_sharded_backgrounds
 
-def _concat_messages_llama(messages):
-    """
-    Membagi beberapa background menjadi potongan-potongan kecil berdasarkan panjang token yang ditentukan.
-
-    Args:
-        backgrounds (list): List dari background yang terdiri dari string. Setiap string akan diproses untuk dipotong menjadi bagian-bagian kecil.
-        tokenizer (Tokenizer): Tokenizer yang digunakan untuk memproses teks menjadi token. Biasanya menggunakan model tokenizer dari Hugging Face.
-        total_max_len (int): Panjang maksimum total token untuk setiap background. Background yang lebih panjang akan dipotong hingga panjang ini.
-        single_max_len (int): Panjang maksimum untuk setiap potongan. Background akan dibagi menjadi potongan-potongan kecil dengan panjang ini.
-        single_min_len (int, default 20): Panjang minimum untuk sebuah potongan. Jika potongan terakhir memiliki panjang kurang dari nilai ini, maka potongan tersebut akan dihapus (jika ada lebih dari satu potongan).
-
-    Returns:
-        list: List yang berisi potongan-potongan kecil dari background. Setiap potongan adalah string yang sudah diproses dan dipotong berdasarkan panjang token yang ditentukan.
-    """
+def _concat_messages_llama(messages, llm_tokenizer):
 
     message_text = "<|begin_of_text|>"
     for message in messages:
@@ -158,6 +145,15 @@ def _concat_messages_llama(messages):
             message_text += f"<|start_header_id|>assistant<|end_header_id|>{message['content'].strip()}<|eot_id|>"
         else:
             raise ValueError("Invalid role: {}".format(message["role"]))
+    return message_text
+
+def _concat_messages_qwen(messages, llm_tokenizer):
+    message_text = llm_tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=False,
+        enable_thinking=False # Switches between thinking and non-thinking modes. Default is True.
+    )
     return message_text
 
 def truncate_using_retriever_tokenizer(retriever_tokenizer, text, context_length) :
@@ -185,11 +181,21 @@ def _encode_chat_format(
     Return:
         input_ids and labels
     """
-    _concat_messages = eval(f"_concat_messages_{chat_format}")
+    # _concat_messages = eval(f"_concat_messages_{chat_format}")
+    if chat_format == 'llama':
+        # print("Menambahkan token spesial dengan format LLAMA")
+        # example_text = _concat_messages_llama(messages).strip()
+        _concat_messages = _concat_messages_llama
+    elif chat_format =='qwen':
+        # print("Menambahkan token spesial dengan format QWEN")
+        # example_text = _concat_messages_qwen(messages, llm_tokenizer).strip()
+        _concat_messages = _concat_messages_qwen
+    else:
+        raise ValueError(f"Invalid chat_format: {chat_format}. Must be 'qwen' or 'llama'.")
     
-    example_text = _concat_messages(messages).strip()
+    example_text = _concat_messages(messages, llm_tokenizer=llm_tokenizer).strip()
     tokenized_example = llm_tokenizer(example_text, return_tensors='pt', max_length=max_seq_length, truncation=True, add_special_tokens=False)
-    # KALAU BACKGROUND KEPANJANGAN (melebihi 1024 token), MAKA CONTENT ASSISTANT TIDAK AKAN TERTOKENISASI KARENA SUDAH KEPOTONG OLEH TRUNCATION
+    # KALAU BACKGROUND KEPANJANGAN (melebihi 1024 token), MAKA CONTENT DR ASSISTANT TIDAK AKAN TERTOKENISASI KARENA SUDAH KEPOTONG OLEH TRUNCATION
     # alhasil akan kena filter oleh train_dataset.filter(lambda example: (example['labels'] != -100).any())
     # dan itu gapapa, karena hanya menyusun sekitar 123 baris train dan 17 baris dev. masih ada 4419 baris untuk latihan dan 1126 baris untuk dev
     
@@ -211,13 +217,13 @@ def _encode_chat_format(
                 message_start_idx = 0
             else:
                 message_start_idx = llm_tokenizer(
-                    _concat_messages(messages[:message_idx]), return_tensors='pt', max_length=max_seq_length, truncation=True
+                    _concat_messages(messages[:message_idx]), llm_tokenizer=llm_tokenizer, return_tensors='pt', max_length=max_seq_length, truncation=True
                 ).input_ids.shape[1]
             
-            if chat_format in ['llama']:
+            if chat_format in ['llama', 'qwen']:
                 # Karena elemen messages bergantian antara role:user dengan role:assistant, 
                 # ambil messages_so_far sebagai messages indeks role:user saja
-                messages_so_far = _concat_messages(messages[:message_idx+1])         
+                messages_so_far = _concat_messages(messages[:message_idx+1], llm_tokenizer=llm_tokenizer)         
 
             # Tokenisasi message role:user
             message_end_idx = llm_tokenizer(
@@ -256,12 +262,6 @@ def encode_with_chat_format_pretrain(
         ):
     """
     encode messages into input_ids and labels for paraphrase pretrain
-
-    Args:
-        example: data sample with 'text' filed
-        tokenizer: llm_tokenizer
-        max_seq_length: maximun context length
-        retrieval_embed_length: number of tokens for retrieval (typically 1 for dense retrieval model)
     
     Return:
         input_ids,labels and retriever_input_text
