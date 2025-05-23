@@ -24,7 +24,7 @@ def detect_device() -> ModelConfig:
     if torch.cuda.is_available():
         return ModelConfig(
             device_type=DeviceType.CUDA,
-            dtype=torch.float16,  # Using float16 for CUDA by default
+            dtype=torch.bfloat16,  # Using float16 for CUDA by default
             device_map=None  # Disable automatic mapping to ensure manual placement
         )
     else:
@@ -78,26 +78,32 @@ def format_chat_prompt(messages: List[Dict[str, str]],
     """Format chat messages using model's template or fallback format"""
     try:
         if hasattr(tokenizer, 'apply_chat_template'):
+            tokenize_kwargs = {}
+            if "qwen" in getattr(tokenizer, "name_or_path", "").lower():
+                tokenize_kwargs = {
+                    "enable_thinking" : False
+                }
             return tokenizer.apply_chat_template(
                 messages,
                 tokenize=False,
-                add_generation_prompt=True
+                add_generation_prompt=True, 
+                **tokenize_kwargs
             )
             
-        else:
-            formatted_prompt = ""
-            for message in messages:
-                role = message['role']
-                content = message['content']
-                if role == 'sistem':
-                    formatted_prompt += f"<|sistem|>\n{content}\n"
-                elif role == 'pengguna':
-                    formatted_prompt += f"<|pengguna|>\n{content}\n"
-                elif role == 'asisten':
-                    formatted_prompt += f"<|asisten|>\n{content}\n"
-                else:
-                    raise ValueError(f"Peran tak diketahui: {role}")
-            return formatted_prompt + "<|asisten|>\n"
+        # else:
+        #     formatted_prompt = ""
+        #     for message in messages:
+        #         role = message['role']
+        #         content = message['content']
+        #         if role == 'sistem':
+        #             formatted_prompt += f"<|sistem|>\n{content}\n"
+        #         elif role == 'pengguna':
+        #             formatted_prompt += f"<|pengguna|>\n{content}\n"
+        #         elif role == 'asisten':
+        #             formatted_prompt += f"<|asisten|>\n{content}\n"
+        #         else:
+        #             raise ValueError(f"Peran tak diketahui: {role}")
+        #     return formatted_prompt + "<|asisten|>\n"
     except Exception as e:
         raise RuntimeError(f"Error formatting chat prompt: {e}")
     
@@ -107,10 +113,11 @@ def prepare_inputs(
     device_type: DeviceType
 ) -> Dict[str, torch.Tensor]:
     """Prepare model inputs with proper device placement"""
+
     inputs = tokenizer(
         text,
         return_tensors="pt",
-        return_offsets_mapping=True,
+        # return_offsets_mapping=True,
         padding=True,  # Padding di awal teks (sisi kiri)
         truncation=True, 
         add_special_tokens=False
@@ -119,7 +126,7 @@ def prepare_inputs(
     # Remove the first token (always duplicate <|begin_of_text|>)
     inputs['input_ids'] = inputs['input_ids']
     inputs['attention_mask'] = inputs['attention_mask']
-    inputs['offset_mapping'] = inputs['offset_mapping']
+    # inputs['offset_mapping'] = inputs['offset_mapping']
     
     # Move tensors to appropriate device
     device = device_type.value

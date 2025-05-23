@@ -96,7 +96,7 @@ def generate_answers_and_evaluate(
     for i in tqdm(range(len(dataset)), desc="Generating responses"):
         query = dataset['query'][i]
         summary = dataset['summary'][i]
-        answer = dataset['answers'][i] 
+        answer = dataset['answer'][i] 
         passages = dataset['formatted_passages'][i] 
 
         # 🔄 **Generate with summary (w_summary)**
