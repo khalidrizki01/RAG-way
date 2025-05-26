@@ -1,4 +1,4 @@
-# python train_summarizer.py --model_name_or_path google/flan-t5-base --do_train --do_eval --dataset_name ./generated_data/RECOMP_tuning --max_target_length 512 --output_dir ./models/1 --per_device_train_batch_size=2 --gradient_accumulation_steps=2 --per_device_eval_batch_size=1 --max_train_samples 16 --max_eval_samples 8 --predict_with_generate --num_train_epochs 3 --save_total_limit 3 --logging_first_step True --learning_rate 1e-5  --text_column passages --query_column query --summary_column summary
+# python train_summarizer.py --model_name_or_path google/flan-t5-large --do_train --do_eval --dataset_name ./generated_data/RECOMP_tuning --max_target_length 512 --output_dir ./models/ --per_device_train_batch_size=1 --gradient_accumulation_steps=2 --per_device_eval_batch_size=1 --max_train_samples 16 --max_eval_samples 8 --predict_with_generate --num_train_epochs 3 --save_total_limit 3 --logging_first_step True --learning_rate 1e-5  --text_column passages --query_column query --summary_column summary
 
 """
 Fine-tuning the library models for sequence to sequence.
@@ -307,6 +307,8 @@ def main():
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     training_args.evaluation_strategy="steps"
+    training_args.fp16 = True
+
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_summarization", model_args, data_args)
