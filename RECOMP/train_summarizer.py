@@ -522,7 +522,7 @@ def main():
 
     def preprocess_summary_function(split, examples):
         # remove pairs where at least one record is None
-        inputs, targets, gold_answers, questions, relevance = [], [], [], [], []
+        inputs, targets, questions = [], [], []
         for i in range(len(examples[query_column])):
             input_txt = "Question: {}\n Document: {}\n Summary: ".format(
                 examples[query_column][i],
