@@ -1,4 +1,6 @@
-# python train_summarizer.py --model_name_or_path google/flan-t5-large --do_train --do_eval --dataset_name ./generated_data/RECOMP_tuning --max_target_length 512 --output_dir ./models/ --per_device_train_batch_size=1 --gradient_accumulation_steps=2 --per_device_eval_batch_size=1 --max_train_samples 16 --max_eval_samples 8 --predict_with_generate --num_train_epochs 3 --save_total_limit 3 --logging_first_step True --learning_rate 1e-5  --text_column passages --query_column query --summary_column summary
+# python train_summarizer.py --model_name_or_path google/flan-t5-base --do_train --do_eval --dataset_name ./generated_data/RECOMP_tuning_with_no_Judul_nTeks --max_target_length 52 --output_dir ./models/ --per_device_train_batch_size=4 --gradient_accumulation_steps=2 --per_device_eval_batch_size=32  --predict_with_generate --num_train_epochs 3 --save_total_limit 3 --logging_first_step True --learning_rate 1e-5  --text_column passages --query_column query --summary_column summary --seed 42
+
+# python train_summarizer.py --model_name_or_path ./models/-google-flan-t5-base-2025-05-28_07-17-31 --do_predict --dataset_name ./generated_data/RECOMP_tuning_with_no_Judul_nTeks --max_target_length 52 --output_dir ./outputs/ --per_device_eval_batch_size=4 --predict_with_generate
 
 """
 Fine-tuning the library models for sequence to sequence.
@@ -160,7 +162,7 @@ class DataTrainingArguments:
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
     max_source_length: Optional[int] = field(
-        default=1024,
+        default=512,
         metadata={
             "help": (
                 "The maximum total input sequence length after tokenization. Sequences longer "
@@ -279,21 +281,12 @@ class DataTrainingArguments:
 
 summarization_name_mapping = {
     "amazon_reviews_multi": ("review_body", "review_title"),
-    "big_patent": ("description", "abstract"),
-    "cnn_dailymail": ("article", "highlights"),
-    "orange_sum": ("text", "summary"),
-    "pn_summary": ("article", "summary"),
-    "psc": ("extract_text", "summary_text"),
-    "samsum": ("dialogue", "summary"),
-    "thaisum": ("body", "summary"),
-    "xglue": ("news_body", "news_title"),
-    "xsum": ("document", "summary"),
-    "wiki_summary": ("article", "highlights"),
-    "multi_news": ("document", "summary"),
+    "big_patent": ("description", "abstract")
 }
 
 
 def main():
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
@@ -306,7 +299,8 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    training_args.evaluation_strategy="steps"
+    training_args.logging_strategy = "epoch"
+    training_args.evaluation_strategy="epoch"
     training_args.fp16 = True
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
@@ -372,15 +366,6 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    # Get the datasets: you can either provide your own CSV/JSON training and evaluation files (see below)
-    # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
-    # (the dataset will be downloaded automatically from the datasets Hub).
-    #
-    # For CSV/JSON files this script will use the first column for the full texts and the second column for the
-    # summaries (unless you specify column names for this with the `text_column` and `summary_column` arguments).
-    #
-    # In distributed training, the load_dataset function guarantee that only one local process can concurrently
-    # download the dataset.
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
         raw_datasets = load_from_disk(
@@ -389,14 +374,6 @@ def main():
     else: 
         raise ValueError("Must include dataset_name to load from disk")
 
-    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
-    # https://huggingface.co/docs/datasets/loading_datasets.html.
-
-    # Load pretrained model and tokenizer
-    #
-    # Distributed training:
-    # The .from_pretrained methods guarantee that only one local process can concurrently
-    # download model & vocab.
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
@@ -454,7 +431,10 @@ def main():
                 " model's position encodings by passing `--resize_position_embeddings`."
             )
 
-    prefix = data_args.source_prefix if data_args.source_prefix is not None else ""
+    prefix = data_args.source_prefix if data_args.source_prefix is not None else "Rangkum Dokumen agar bisa menjawab Pertanyaan. Biarkan Rangkuman kosong jika Dokumen tidak bisa menjawab.\n"
+    print("KONFIGURASI PREFIX", "="*40)
+    print(prefix)
+    print("="*60)
 
     # Preprocessing the datasets.
     # We need to tokenize inputs and targets.
@@ -526,7 +506,7 @@ def main():
         # remove pairs where at least one record is None
         inputs, targets, questions = [], [], []
         for i in range(len(examples[query_column])):
-            input_txt = "Question: {}\n Document: {}\n Summary: ".format(
+            input_txt = "Pertanyaan: {}\n Dokumen: {}\n Rangkuman: ".format(
                 examples[query_column][i],
                 examples[text_column][i],
             )
@@ -608,11 +588,6 @@ def main():
         label_pad_token_id=label_pad_token_id,
         pad_to_multiple_of=8 if training_args.fp16 else None,
     )
-
-    # Metric
-    # metric = evaluate.load("rouge")
-    from rouge import Rouge
-    rouge = Rouge()
 
     def postprocess_text(preds, labels):
         preds = [pred.strip() for pred in preds]

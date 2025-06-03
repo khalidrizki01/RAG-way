@@ -4,14 +4,18 @@ from datasets import Dataset
 from tqdm import tqdm
 import torch
 import gc
-from nltk.corpus import stopwords
-
+import unicodedata
 import re
 import string
 from collections import Counter
+from nltk.corpus import stopwords
 
-# Daftar stopwords bahasa Indonesia (bisa diperluas)
-STOPWORDS_ID = set(stopwords.words('indonesian'))
+try: 
+    STOPWORDS_ID = set(stopwords.words('indonesian'))
+except LookupError:
+    import nltk
+    nltk.download('stopwords')
+    STOPWORDS_ID = set(stopwords.words('indonesian'))
 
 def normalize_answer(s):
     """
@@ -184,3 +188,74 @@ def generate_answers_and_evaluate(
         })
 
     return processed_results
+
+def generate_answer_and_do_scoring(
+    dataset: Dataset,
+    query_col: str, 
+    summary_col: str, 
+    label_col: str, 
+    passages_col: str,
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    max_new_tokens: int = 50, 
+    max_source_length: int = 512
+):
+    """
+    Generate completions with summary only, and evaluate EM & F1 scores.
+    Return query, passages, summary, label (answer), generated_answer, em, f1.
+    """
+    config = detect_device()
+
+    results = []
+    tokenize_kwargs = {}
+    if max_source_length is not None:
+        tokenize_kwargs = {
+            'max_length':max_source_length
+        }
+
+    for i in tqdm(range(len(dataset)), desc="Generating responses with summary only"):
+        query = dataset[query_col][i]
+        summary = dataset[summary_col][i]
+        label = dataset[label_col][i]
+        passages = dataset[passages_col][i]
+
+        # Generate with summary (w_summary) only
+        messages_w_summary = [
+            {
+                "role": "user",
+                "content": f"Konteks: {summary}\nBerdasarkan konteks sebelumnya, jawab pertanyaan berikut. Pertanyaan: {query}"
+            }
+        ]
+
+        inputs_w_summary = prepare_inputs(format_chat_prompt(messages_w_summary, tokenizer), tokenizer, config.device_type, **tokenize_kwargs)
+        result_w_summary = model.generate(
+            inputs_w_summary["input_ids"],
+            max_new_tokens=max_new_tokens,
+            temperature=0.7,
+            top_p=1.0,
+            do_sample=True,
+            pad_token_id=tokenizer.pad_token_id,
+            return_dict_in_generate=True
+        )
+
+        # Remove prompt tokens from generated tokens
+        w_summary_token_ids = inputs_w_summary['input_ids'][0]
+        w_summary_generated_ids = result_w_summary.sequences[0][len(w_summary_token_ids):]
+        completion_w_summary = tokenizer.decode(w_summary_generated_ids, skip_special_tokens=True)
+
+        # Evaluate EM and F1 for w_summary only
+        em_w_summary, f1_w_summary = evaluate_em_f1(completion_w_summary, label.strip())
+
+        # Simpan hasil yang diminta
+        results.append({
+            "query": query,
+            "passages": passages,
+            "summary": summary,
+            "label": label,
+            "generated_answer": completion_w_summary,
+            "em": em_w_summary,
+            "f1": f1_w_summary,
+        })
+
+    return results
+
