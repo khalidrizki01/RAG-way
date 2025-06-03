@@ -1,5 +1,5 @@
 import random, copy, torch
-from datasets import Dataset, load_from_disk
+from datasets import Dataset, load_from_disk, load_dataset
 
 XRAG_TOKEN = "<xRAG>" 
 
@@ -19,12 +19,15 @@ ParaphraseInstructions = [
     "The essence of background: {xrag_token} is captured again in the following statement:",
 ]
 
-def load_and_format_dataset(dataset_path, query_col, answer_col, psg_col, task_type, max_rows=None, include_psg_len=False):
+def load_and_format_dataset(dataset_path, query_col, answer_col, psg_col, task_type, dataset_src='local', max_rows=None, include_psg_len=False):
     """
     Mengubah format dari dataset raw ke format yang sesuai untuk xRAG
     """
     # Memuat dataset yang disimpan dalam format DatasetDict (train, dev, test)
-    dataset = load_from_disk(dataset_path)
+    if dataset_src == 'local':
+        dataset = load_from_disk(dataset_path)
+    elif dataset_src =='huggingface':
+        dataset = load_dataset(dataset_path)
 
     # Iterasi untuk setiap split dalam DatasetDict
     for split_name, split_data in dataset.items():
