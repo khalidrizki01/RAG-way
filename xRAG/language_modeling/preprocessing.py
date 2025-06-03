@@ -147,11 +147,11 @@ def _concat_messages_llama(messages, llm_tokenizer):
             raise ValueError("Invalid role: {}".format(message["role"]))
     return message_text
 
-def _concat_messages_qwen(messages, llm_tokenizer):
+def _concat_messages_qwen(messages, llm_tokenizer, add_generation_prompt=False):
     message_text = llm_tokenizer.apply_chat_template(
         messages,
         tokenize=False,
-        add_generation_prompt=False,
+        add_generation_prompt=add_generation_prompt,
         enable_thinking=False # Switches between thinking and non-thinking modes. Default is True.
     )
     return message_text
