@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 from typing import List
 import torch
+import math
 
 class MultiTokenEOSCriteria(StoppingCriteria):
     """Criteria to stop on the specified multi-token sequence."""
@@ -131,3 +132,57 @@ def validate_during_pretrain(model, dataloader, vocab_size):
     model.train()  # Kembali ke mode training
     ppl = torch.exp(torch.tensor(sum(total_loss)/len(total_loss)))
     return ppl
+
+@torch.no_grad()
+def validate_during_finetune(model, dataloader, vocab_size, args):
+    model.eval()
+    total_nll_loss = []
+    total_kl_loss = []
+    for batch in dataloader:
+        student_outputs = model(
+            input_ids = batch['xrag_input_ids'],
+            attention_mask = batch['xrag_attention_mask'],
+            retrieval_embeds = batch['retriever_embeddings']
+        )
+
+        del batch['xrag_input_ids']
+        del batch['xrag_attention_mask']
+        del batch['retriever_embeddings']
+        torch.cuda.empty_cache()
+
+        nll_loss = get_nll_loss(
+            labels = batch['xrag_labels'],
+            logits = student_outputs.logits,
+            vocab_size = vocab_size,
+        )
+        total_nll_loss.append(nll_loss.item())
+
+        if args.alpha_kl is not None and args.alpha_kl > 0.0:
+            teacher_outputs = model(
+                input_ids = batch['input_ids'],
+                attention_mask = batch['attention_mask'],
+            )
+
+            del batch['input_ids']
+            del batch['attention_mask']
+
+            kl_loss = get_kl_loss(
+                teacher_logits=teacher_outputs.logits,
+                teacher_labels=batch['labels'],
+                student_logits=student_outputs.logits,
+                student_labels=batch['xrag_labels'],
+                temperature=args.kl_temperature
+            )
+            total_kl_loss.append(kl_loss.item())
+    
+    model.train()
+    nll = sum(total_nll_loss)/len(total_nll_loss)
+    kl = sum(total_kl_loss)/len(total_kl_loss) if total_kl_loss else 0.0
+    total_loss = args.alpha_nll * nll + args.alpha_kl * kl
+
+    return {
+        "nll": nll,
+        "ppl": math.exp(nll),
+        "kl": kl,
+        "total_loss": total_loss
+    }
