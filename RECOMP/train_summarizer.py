@@ -1,6 +1,6 @@
-# python train_summarizer.py --dataset_name ./generated_data/RECOMP_tuning_w_do_sample_False_and_wo_Judul_nTeks --text_column passages --query_column query --summary_column summary --model_name_or_path google/flan-t5-base --seed 42 --num_train_epochs 3 --per_device_train_batch_size=4 --gradient_accumulation_steps=2 --per_device_eval_batch_size=32 --learning_rate 1e-5 --max_target_length 52 --output_dir ./models/temp/ --logging_first_step True --do_train --do_eval --predict_with_generate  --save_total_limit 3
+# python train_summarizer.py --dataset_name khalidrizki/RECOMP-tuning --text_column passages --query_column query --summary_column final_summary --model_name_or_path google/flan-t5-base --seed 42 --num_train_epochs 3 --per_device_train_batch_size=4 --gradient_accumulation_steps=2 --per_device_eval_batch_size=32 --learning_rate 1e-5 --max_target_length 52 --output_dir ./models/temp/ --logging_first_step True --do_train --do_eval --predict_with_generate  --save_total_limit 3
 
-# python train_summarizer.py --model_name_or_path ./models/-google-flan-t5-base-2025-05-28_07-17-31 --do_predict --dataset_name ./generated_data/RECOMP_tuning_with_no_Judul_nTeks --max_target_length 52 --output_dir ./outputs/ --per_device_eval_batch_size=4 --predict_with_generate
+# python train_summarizer.py --model_name_or_path ./models/-google-flan-t5-base-2025-05-28_07-17-31 --do_predict --dataset_name khalidrizki/RECOMP-tuning --max_target_length 52 --output_dir ./outputs/ --per_device_eval_batch_size=4 --predict_with_generate
 
 """
 Fine-tuning the library models for sequence to sequence.
@@ -388,7 +388,7 @@ def main():
 
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
-        raw_datasets = load_from_disk(
+        raw_datasets = load_dataset(
             data_args.dataset_name
         )
     else: 
