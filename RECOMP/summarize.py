@@ -63,9 +63,9 @@ def generate_summary_dataset(
     tokenizer: AutoTokenizer,
     batch_size: int = 4,
     max_new_tokens: int = 50,
-    temperature: float = 0.7, 
+    temperature: float = 0, 
     summary_col: str = "summary", 
-    max_source_length: int = None
+    max_source_length: int = 512
 ):
     """
     Merangkum kolom 'top_5_combined' menjadi teks pendek 2 kalimat untuk setiap row.
