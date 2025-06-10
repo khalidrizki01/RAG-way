@@ -1,6 +1,6 @@
-# python train_summarizer.py --dataset_name khalidrizki/RECOMP-tuning --text_column passages --query_column query --summary_column final_summary --model_name_or_path google/flan-t5-base --seed 42 --num_train_epochs 3 --per_device_train_batch_size=4 --gradient_accumulation_steps=2 --per_device_eval_batch_size=32 --learning_rate 1e-5 --max_target_length 52 --output_dir ./models/temp/ --logging_first_step True --do_train --do_eval --predict_with_generate  --save_total_limit 3
+# python train_summarizer.py --dataset_name khalidrizki/RECOMP-tuning --text_column passages --query_column query --summary_column final_summary --model_name_or_path google/flan-t5-base --seed 42 --num_train_epochs 3 --per_device_train_batch_size=4 --gradient_accumulation_steps=2 --per_device_eval_batch_size=32 --learning_rate 1e-5 --max_target_length 52 --output_dir ./models/ --logging_first_step True --do_train --do_eval --predict_with_generate  --save_total_limit 3
 
-# python train_summarizer.py --model_name_or_path ./models/-google-flan-t5-base-2025-05-28_07-17-31 --do_predict --dataset_name khalidrizki/RECOMP-tuning --max_target_length 52 --output_dir ./outputs/ --per_device_eval_batch_size=4 --predict_with_generate
+# python train_summarizer.py --model_name_or_path ./models/-google-flan-t5-base-2025-06-09_19-36-13 --do_predict --dataset_name khalidrizki/RECOMP-tuning --max_target_length 52 --output_dir ./outputs/ --per_device_eval_batch_size=32 --predict_with_generate --text_column passages --query_column query --summary_column final_summary
 
 """
 Fine-tuning the library models for sequence to sequence.
@@ -70,21 +70,27 @@ class LossLoggerCallback(TrainerCallback):
     def __init__(self, output_path):
         self.output_path = output_path
         self.epoch_logs = []
-        self._latest_train_loss = None
+        self._loss_sum = 0.0
+        self._loss_count = 0
 
     def on_log(self, args, state, control, logs=None, **kwargs):
-        if logs is not None and "loss" in logs:
-            self._latest_train_loss = logs["loss"]  # simpan train loss terakhir
+        if logs is not None and "loss" in logs and state.epoch is not None:
+            self._loss_sum += logs["loss"]
+            self._loss_count += 1
 
     def on_evaluate(self, args, state, control, metrics=None, **kwargs):
         if metrics is not None and state.epoch is not None and float(state.epoch).is_integer():
+            avg_train_loss = self._loss_sum / self._loss_count if self._loss_count > 0 else None
             log = {
                 "epoch": int(state.epoch),
-                "train_loss": round(self._latest_train_loss, 4) if self._latest_train_loss else None,
+                "train_loss": round(avg_train_loss, 4) if avg_train_loss else None,
                 "eval_loss": metrics.get("eval_loss"),
                 "eval_gen_len": metrics.get("gen_len")
             }
             self.epoch_logs.append(log)
+            # Reset akumulator untuk epoch berikutnya
+            self._loss_sum = 0.0
+            self._loss_count = 0
 
     def on_train_end(self, args, state, control, **kwargs):
         with open(os.path.join(self.output_path, "loss_per_epoch.json"), "w") as f:
@@ -320,7 +326,7 @@ def main():
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     training_args.logging_strategy = "epoch"
-    training_args.eval_strategy="epoch"
+    training_args.eval_strategy= "epoch" if training_args.do_eval else 'no'
     training_args.fp16 = True
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
@@ -387,10 +393,10 @@ def main():
     set_seed(training_args.seed)
 
     if data_args.dataset_name is not None:
-        # Downloading and loading a dataset from the hub.
-        raw_datasets = load_dataset(
-            data_args.dataset_name
-        )
+        if data_args.dataset_name.startswith('khalidrizki'):
+            raw_datasets = load_dataset(data_args.dataset_name)
+        else:
+            raw_datasets = load_from_disk(data_args.dataset_name)
     else: 
         raise ValueError("Must include dataset_name to load from disk")
 
