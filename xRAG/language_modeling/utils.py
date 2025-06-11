@@ -1,8 +1,67 @@
 from preprocessing import get_retrieval_embeds
+from transformers import PreTrainedTokenizer, StoppingCriteria, StoppingCriteriaList
 from tqdm import tqdm
 import torch.nn.functional as F
 import torch.nn as nn
+from typing import List
 import torch
+import math
+
+class MultiTokenEOSCriteria(StoppingCriteria):
+    """Criteria to stop on the specified multi-token sequence."""
+
+    def __init__(
+        self,
+        sequence: str,
+        tokenizer: PreTrainedTokenizer,
+        initial_decoder_input_length: int,
+        batch_size: int,
+    ) -> None:
+        self.initial_decoder_input_length = initial_decoder_input_length
+        self.done_tracker = [False] * batch_size
+        self.sequence = sequence
+        self.sequence_ids = tokenizer.encode(sequence, add_special_tokens=False)
+        # print(sequence, self.sequence_ids)
+        # we look back for 2 more tokens than it takes to encode our stop sequence
+        # because tokenizers suck, and a model might generate `['\n', '\n']` but our `sequence` is `['\n\n']`
+        # and we don't want to mistakenly not stop a generation because our
+        # (string) stop sequence was output in a different tokenization
+
+        # NOTE: there is a minor danger that this will end up looking back 2 tokens into the past, into the inputs to the model,
+        # and stopping generation immediately as a result. With only 2 extra tokens of lookback, this risk is minimized
+        # Additionally, in lookback_ids_batch we should prevent ever looking back into the inputs as described.
+        self.sequence_id_len = len(self.sequence_ids) + 2
+        self.tokenizer = tokenizer
+
+    def __call__(self, input_ids, scores, **kwargs) -> bool:
+        # For efficiency, we compare the last n tokens where n is the number of tokens in the stop_sequence
+        lookback_ids_batch = input_ids[:, self.initial_decoder_input_length :]
+
+        lookback_ids_batch = lookback_ids_batch[:, -self.sequence_id_len :]
+
+        lookback_tokens_batch = self.tokenizer.batch_decode(lookback_ids_batch)
+
+        for i, done in enumerate(self.done_tracker):
+            if not done:
+                self.done_tracker[i] = self.sequence in lookback_tokens_batch[i]
+        return False not in self.done_tracker
+
+def stop_sequences_criteria(
+    tokenizer: PreTrainedTokenizer,
+    initial_decoder_input_length: int,
+    batch_size: int,
+    stop_sequences: List[str] = ['\n', '.', ','],
+    ) -> StoppingCriteriaList:
+    return StoppingCriteriaList(
+        [
+            *[
+                MultiTokenEOSCriteria(
+                    sequence, tokenizer, initial_decoder_input_length, batch_size
+                )
+                for sequence in stop_sequences
+            ],
+        ]
+    )
 
 def get_nll_loss(logits, labels, vocab_size):
     # Shift so that tokens < n predict n
@@ -73,3 +132,57 @@ def validate_during_pretrain(model, dataloader, vocab_size):
     model.train()  # Kembali ke mode training
     ppl = torch.exp(torch.tensor(sum(total_loss)/len(total_loss)))
     return ppl
+
+@torch.no_grad()
+def validate_during_finetune(model, dataloader, vocab_size, args):
+    model.eval()
+    total_nll_loss = []
+    total_kl_loss = []
+    for batch in dataloader:
+        student_outputs = model(
+            input_ids = batch['xrag_input_ids'],
+            attention_mask = batch['xrag_attention_mask'],
+            retrieval_embeds = batch['retriever_embeddings']
+        )
+
+        del batch['xrag_input_ids']
+        del batch['xrag_attention_mask']
+        del batch['retriever_embeddings']
+        torch.cuda.empty_cache()
+
+        nll_loss = get_nll_loss(
+            labels = batch['xrag_labels'],
+            logits = student_outputs.logits,
+            vocab_size = vocab_size,
+        )
+        total_nll_loss.append(nll_loss.item())
+
+        if args.alpha_kl is not None and args.alpha_kl > 0.0:
+            teacher_outputs = model(
+                input_ids = batch['input_ids'],
+                attention_mask = batch['attention_mask'],
+            )
+
+            del batch['input_ids']
+            del batch['attention_mask']
+
+            kl_loss = get_kl_loss(
+                teacher_logits=teacher_outputs.logits,
+                teacher_labels=batch['labels'],
+                student_logits=student_outputs.logits,
+                student_labels=batch['xrag_labels'],
+                temperature=args.kl_temperature
+            )
+            total_kl_loss.append(kl_loss.item())
+    
+    model.train()
+    nll = sum(total_nll_loss)/len(total_nll_loss)
+    kl = sum(total_kl_loss)/len(total_kl_loss) if total_kl_loss else 0.0
+    total_loss = args.alpha_nll * nll + args.alpha_kl * kl
+
+    return {
+        "nll": nll,
+        "ppl": math.exp(nll),
+        "kl": kl,
+        "total_loss": total_loss
+    }
