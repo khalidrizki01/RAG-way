@@ -21,9 +21,9 @@ def build_prompts(batch_data, query_col, psgs_col, tokenizer):
         batch_texts.append(formatted_prompt)
     return batch_texts
 
-def generate_summaries(model, tokenizer, batch_texts, max_new_tokens, temperature):
+def generate_summaries(model, tokenizer, batch_texts, max_new_tokens, temperature, max_source_length=None):
     """Generate summary untuk batch prompt."""
-    inputs = prepare_inputs(batch_texts, tokenizer, DeviceType.CUDA)
+    inputs = prepare_inputs(batch_texts, tokenizer, DeviceType.CUDA, max_length=max_source_length)
     token_ids = inputs["input_ids"]
     summaries = []
 
@@ -56,14 +56,16 @@ def cleanup_cuda():
     gc.collect()
 
 def generate_summary_dataset(
+    model,
     dataset: Dataset, 
     query_col: str, 
     psgs_col: str, 
-    model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
     batch_size: int = 4,
     max_new_tokens: int = 50,
-    temperature: float = 0.7
+    temperature: float = 0, 
+    summary_col: str = "summary", 
+    max_source_length: int = 512
 ):
     """
     Merangkum kolom 'top_5_combined' menjadi teks pendek 2 kalimat untuk setiap row.
@@ -97,7 +99,7 @@ def generate_summary_dataset(
             batch_data = dataset.select(range(start_idx, end_idx))
 
             batch_texts = build_prompts(batch_data, query_col, psgs_col, tokenizer)
-            batch_summaries = generate_summaries(model, tokenizer, batch_texts, max_new_tokens, temperature)
+            batch_summaries = generate_summaries(model, tokenizer, batch_texts, max_new_tokens, temperature, max_source_length=max_source_length)
             summaries.extend(batch_summaries)
 
             # Bersihkan variabel yang tidak diperlukan
@@ -105,7 +107,7 @@ def generate_summary_dataset(
             cleanup_cuda()
 
         # Tambahkan kolom baru 'summary' ke dataset
-        dataset = dataset.add_column("summary", summaries)
+        dataset = dataset.add_column(summary_col, summaries)
         cleanup_cuda()
         return dataset
 

@@ -1,0 +1,9 @@
+{
+    "predict_gen_len": 4.523893805309735,
+    "predict_loss": 1.4000742435455322,
+    "predict_model_preparation_time": 0.0095,
+    "predict_runtime": 76.2337,
+    "predict_samples": 565,
+    "predict_samples_per_second": 7.411,
+    "predict_steps_per_second": 0.236
+}

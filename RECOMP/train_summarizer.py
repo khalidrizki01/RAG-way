@@ -1,4 +1,6 @@
-# python train_summarizer.py --model_name_or_path google/flan-t5-large --do_train --do_eval --dataset_name ./generated_data/RECOMP_tuning --max_target_length 512 --output_dir ./models/ --per_device_train_batch_size=1 --gradient_accumulation_steps=2 --per_device_eval_batch_size=1 --max_train_samples 16 --max_eval_samples 8 --predict_with_generate --num_train_epochs 3 --save_total_limit 3 --logging_first_step True --learning_rate 1e-5  --text_column passages --query_column query --summary_column summary
+# python train_summarizer.py --dataset_name khalidrizki/RECOMP-tuning --text_column passages --query_column query --summary_column final_summary --model_name_or_path google/flan-t5-base --seed 42 --num_train_epochs 3 --per_device_train_batch_size=4 --gradient_accumulation_steps=2 --per_device_eval_batch_size=32 --learning_rate 1e-5 --max_target_length 52 --output_dir ./models/ --logging_first_step True --do_train --do_eval --predict_with_generate  --save_total_limit 3
+
+# python train_summarizer.py --model_name_or_path ./models/-google-flan-t5-base-2025-06-09_19-36-13 --do_predict --dataset_name khalidrizki/RECOMP-tuning --max_target_length 52 --output_dir ./outputs/ --per_device_eval_batch_size=32 --predict_with_generate --text_column passages --query_column query --summary_column final_summary
 
 """
 Fine-tuning the library models for sequence to sequence.
@@ -12,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 import ast
 import time
+import json
 
 import datasets
 # import evaluate
@@ -33,6 +36,7 @@ from transformers import (
     MBartTokenizerFast,
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
+    TrainerCallback,
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint
@@ -61,6 +65,36 @@ except (LookupError, OSError):
 
 # A list of all multilingual tokenizer which require lang attribute.
 MULTILINGUAL_TOKENIZERS = [MBartTokenizer, MBartTokenizerFast, MBart50Tokenizer, MBart50TokenizerFast]
+
+class LossLoggerCallback(TrainerCallback):
+    def __init__(self, output_path):
+        self.output_path = output_path
+        self.epoch_logs = []
+        self._loss_sum = 0.0
+        self._loss_count = 0
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs is not None and "loss" in logs and state.epoch is not None:
+            self._loss_sum += logs["loss"]
+            self._loss_count += 1
+
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        if metrics is not None and state.epoch is not None and float(state.epoch).is_integer():
+            avg_train_loss = self._loss_sum / self._loss_count if self._loss_count > 0 else None
+            log = {
+                "epoch": int(state.epoch),
+                "train_loss": round(avg_train_loss, 4) if avg_train_loss else None,
+                "eval_loss": metrics.get("eval_loss"),
+                "eval_gen_len": metrics.get("gen_len")
+            }
+            self.epoch_logs.append(log)
+            # Reset akumulator untuk epoch berikutnya
+            self._loss_sum = 0.0
+            self._loss_count = 0
+
+    def on_train_end(self, args, state, control, **kwargs):
+        with open(os.path.join(self.output_path, "loss_per_epoch.json"), "w") as f:
+            json.dump(self.epoch_logs, f, indent=4)
 
 
 @dataclass
@@ -160,7 +194,7 @@ class DataTrainingArguments:
         metadata={"help": "The number of processes to use for the preprocessing."},
     )
     max_source_length: Optional[int] = field(
-        default=1024,
+        default=512,
         metadata={
             "help": (
                 "The maximum total input sequence length after tokenization. Sequences longer "
@@ -277,23 +311,8 @@ class DataTrainingArguments:
             self.val_max_target_length = self.max_target_length
 
 
-summarization_name_mapping = {
-    "amazon_reviews_multi": ("review_body", "review_title"),
-    "big_patent": ("description", "abstract"),
-    "cnn_dailymail": ("article", "highlights"),
-    "orange_sum": ("text", "summary"),
-    "pn_summary": ("article", "summary"),
-    "psc": ("extract_text", "summary_text"),
-    "samsum": ("dialogue", "summary"),
-    "thaisum": ("body", "summary"),
-    "xglue": ("news_body", "news_title"),
-    "xsum": ("document", "summary"),
-    "wiki_summary": ("article", "highlights"),
-    "multi_news": ("document", "summary"),
-}
-
-
 def main():
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
@@ -306,7 +325,8 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    training_args.evaluation_strategy="steps"
+    training_args.logging_strategy = "epoch"
+    training_args.eval_strategy= "epoch" if training_args.do_eval else 'no'
     training_args.fp16 = True
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
@@ -372,31 +392,14 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    # Get the datasets: you can either provide your own CSV/JSON training and evaluation files (see below)
-    # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
-    # (the dataset will be downloaded automatically from the datasets Hub).
-    #
-    # For CSV/JSON files this script will use the first column for the full texts and the second column for the
-    # summaries (unless you specify column names for this with the `text_column` and `summary_column` arguments).
-    #
-    # In distributed training, the load_dataset function guarantee that only one local process can concurrently
-    # download the dataset.
     if data_args.dataset_name is not None:
-        # Downloading and loading a dataset from the hub.
-        raw_datasets = load_from_disk(
-            data_args.dataset_name
-        )
+        if data_args.dataset_name.startswith('khalidrizki'):
+            raw_datasets = load_dataset(data_args.dataset_name)
+        else:
+            raw_datasets = load_from_disk(data_args.dataset_name)
     else: 
         raise ValueError("Must include dataset_name to load from disk")
 
-    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
-    # https://huggingface.co/docs/datasets/loading_datasets.html.
-
-    # Load pretrained model and tokenizer
-    #
-    # Distributed training:
-    # The .from_pretrained methods guarantee that only one local process can concurrently
-    # download model & vocab.
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
@@ -454,7 +457,10 @@ def main():
                 " model's position encodings by passing `--resize_position_embeddings`."
             )
 
-    prefix = data_args.source_prefix if data_args.source_prefix is not None else ""
+    prefix = data_args.source_prefix if data_args.source_prefix is not None else "Rangkum Dokumen agar bisa menjawab Pertanyaan. Biarkan Rangkuman kosong jika Dokumen tidak bisa menjawab.\n"
+    print("KONFIGURASI PREFIX", "="*40)
+    print(prefix)
+    print("="*60)
 
     # Preprocessing the datasets.
     # We need to tokenize inputs and targets.
@@ -490,9 +496,9 @@ def main():
         model.config.forced_bos_token_id = forced_bos_token_id
 
     # Get the column names for input/target.
-    dataset_columns = summarization_name_mapping.get(data_args.dataset_name, None)
+    dataset_columns = None
     if data_args.text_column is None:
-        text_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
+        raise ValueError("Must include --text_column when starting the program")
     else:
         text_column = data_args.text_column
         if text_column not in column_names:
@@ -500,7 +506,7 @@ def main():
                 f"--text_column' value '{data_args.text_column}' needs to be one of: {', '.join(column_names)}"
             )
     if data_args.summary_column is None:
-        summary_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
+        raise ValueError("Must include --summary_column when starting the program")
     else:
         summary_column = data_args.summary_column
         if summary_column not in column_names:
@@ -510,7 +516,7 @@ def main():
     if data_args.query_column is not None:
         query_column = data_args.query_column
     else:
-        raise ValueError("must include query_column")
+        raise ValueError("Must include --query_column when starting the program")
 
     # Temporarily set max_target_length for training.
     max_target_length = data_args.max_target_length
@@ -526,7 +532,7 @@ def main():
         # remove pairs where at least one record is None
         inputs, targets, questions = [], [], []
         for i in range(len(examples[query_column])):
-            input_txt = "Question: {}\n Document: {}\n Summary: ".format(
+            input_txt = "Pertanyaan: {}\n Dokumen: {}\n Rangkuman: ".format(
                 examples[query_column][i],
                 examples[text_column][i],
             )
@@ -609,11 +615,6 @@ def main():
         pad_to_multiple_of=8 if training_args.fp16 else None,
     )
 
-    # Metric
-    # metric = evaluate.load("rouge")
-    from rouge import Rouge
-    rouge = Rouge()
-
     def postprocess_text(preds, labels):
         preds = [pred.strip() for pred in preds]
         labels = [label.strip() for label in labels]
@@ -664,6 +665,7 @@ def main():
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics if training_args.predict_with_generate else None,
+        callbacks=[LossLoggerCallback(training_args.output_dir)]
     )
 
     # Training
@@ -723,7 +725,7 @@ def main():
                 )
                 predictions = [pred.strip() for pred in predictions]
                 output_prediction_file = os.path.join(training_args.output_dir, "generated_predictions.txt")
-                with open(output_prediction_file, "w") as writer:
+                with open(output_prediction_file, "w", encoding="utf-8", errors="replace") as writer:
                     writer.write("\n".join(predictions))
 
     kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "summarization"}

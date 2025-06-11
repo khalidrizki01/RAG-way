@@ -1,17 +1,19 @@
-from utils import detect_device, load_model_and_tokenizer, format_chat_prompt, prepare_inputs
+from utils import detect_device, format_chat_prompt, prepare_inputs
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import Dataset
 from tqdm import tqdm
-import torch
-import gc
-from nltk.corpus import stopwords
-
 import re
 import string
 from collections import Counter
+from nltk.corpus import stopwords
+from typing import Optional
 
-# Daftar stopwords bahasa Indonesia (bisa diperluas)
-STOPWORDS_ID = set(stopwords.words('indonesian'))
+try: 
+    STOPWORDS_ID = set(stopwords.words('indonesian'))
+except LookupError:
+    import nltk
+    nltk.download('stopwords')
+    STOPWORDS_ID = set(stopwords.words('indonesian'))
 
 def normalize_answer(s):
     """
@@ -70,7 +72,7 @@ def f1_score(prediction, ground_truth):
 
     return f1
 
-def evaluate_em_f1(generated_answer, reference_answer):
+def evaluate_em_f1(generated_answer: str, reference_answer: str)-> tuple[float, float]:
     """
     Evaluasi EM dan F1 dengan membandingkan jawaban model dengan semua referensi.
     """
@@ -80,107 +82,127 @@ def evaluate_em_f1(generated_answer, reference_answer):
     return em_score, f1_score_value  # Ambil skor tertinggi dari semua referensi
 
 
-def generate_answers_and_evaluate(
+def build_prompt(query: str, summary: Optional[str] = None) -> str:
+    if summary:
+        return f"Konteks: {summary}\nBerdasarkan konteks sebelumnya, jawab pertanyaan berikut. Pertanyaan: {query}"
+    return query
+
+def generate_completion(
+    prompt: str,
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    device_type: str,
+    max_new_tokens: int = 50,
+    max_source_length: int = 512
+) -> str:
+    tokenize_kwargs = {}
+    if max_source_length is not None:
+        tokenize_kwargs['max_length'] = max_source_length
+
+    inputs = prepare_inputs(format_chat_prompt([{"role": "user", "content": prompt}], tokenizer), tokenizer, device_type, **tokenize_kwargs)
+    input_ids = inputs["input_ids"]
+    
+    output = model.generate(
+        input_ids,
+        max_new_tokens=max_new_tokens,
+        do_sample=False,
+        pad_token_id=tokenizer.pad_token_id,
+        return_dict_in_generate=True
+    )
+    generated_ids = output.sequences[0][len(input_ids[0]):]
+    completion = tokenizer.decode(generated_ids, skip_special_tokens=True)
+    return completion
+
+def generate_answers_and_compare_between_with_and_without_summary(
     dataset: Dataset,
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
-    max_new_tokens: int = 50,
+    max_new_tokens: int = 52,
+    max_source_length: int = 512
 ):
     """
-    Generate completions with and without summary, and evaluate EM & F1 scores.
+    Generate completions with and without summary, evaluate EM & F1 scores,
+    and decide final summary selection strategy.
     """
     config = detect_device()
+    results = []
 
-    processed_results = []
-
-    for i in tqdm(range(len(dataset)), desc="Generating responses"):
+    for i in tqdm(range(len(dataset)), desc="Generating responses (w/ & wo/ summary)"):
         query = dataset['query'][i]
         summary = dataset['summary'][i]
-        answer = dataset['answer'][i] 
-        passages = dataset['formatted_passages'][i] 
+        answer = dataset['answer'][i]
+        passages = dataset['formatted_passages'][i]
 
-        # 🔄 **Generate with summary (w_summary)**
-        # messages_w_summary = [
-        #     {"role": "user", "content": f"Konteks: {summary}\nPertanyaan: {query}"}
-        # ]
-        messages_w_summary = [
-            {
-                "role": "user",
-                "content": f"Konteks: {dataset['summary'][i]}\nBerdasarkan konteks sebelumnya, jawab pertanyaan berikut. Pertanyaan: {dataset['query'][i]}"
-            }
-        ]
+        # Generate with summary
+        prompt_w_summary = build_prompt(query, summary)
+        completion_w_summary = generate_completion(prompt_w_summary, model, tokenizer, config.device_type, max_new_tokens, max_source_length)
+        em_w, f1_w = evaluate_em_f1(completion_w_summary.strip(), answer.strip())
 
-        inputs_w_summary = prepare_inputs(format_chat_prompt(messages_w_summary, tokenizer), tokenizer, config.device_type)
-        result_w_summary = model.generate(
-            inputs_w_summary["input_ids"],
-            max_new_tokens=max_new_tokens,
-            temperature=0.7,
-            top_p=1.0,
-            do_sample=True,
-            pad_token_id=tokenizer.pad_token_id,
-            return_dict_in_generate=True
-        )
+        # Generate without summary
+        prompt_wo_summary = build_prompt(query, None)
+        completion_wo_summary = generate_completion(prompt_wo_summary, model, tokenizer, config.device_type, max_new_tokens, max_source_length)
+        em_wo, f1_wo = evaluate_em_f1(completion_wo_summary.strip(), answer.strip())
 
-        # 🔄 **Generate without summary (wo_summary)**
-        # messages_wo_summary = [
-        #     {"role": "user", "content": query}
-        # ]
-        messages_wo_summary = [
-            {
-                "role": "user",
-                "content": dataset['query'][i]
-            }
-        ]
-
-        inputs_wo_summary = prepare_inputs(format_chat_prompt(messages_wo_summary, tokenizer), tokenizer, config.device_type)
-        result_wo_summary = model.generate(
-            inputs_wo_summary["input_ids"],
-            max_new_tokens=max_new_tokens,
-            temperature=0.7,
-            top_p=1.0,
-            do_sample=True,
-            pad_token_id=tokenizer.pad_token_id,
-            return_dict_in_generate=True
-        )
-
-        # ✅ **Remove prompt input from the completion using token slicing**
-        w_summary_token_ids = inputs_w_summary['input_ids'][0]  # Tokenized input
-        w_summary_generated_ids = result_w_summary.sequences[0][len(w_summary_token_ids):]  # Generated tokens
-        completion_w_summary = tokenizer.decode(w_summary_generated_ids, skip_special_tokens=True)
-
-        wo_summary_token_ids = inputs_wo_summary['input_ids'][0]
-        wo_summary_generated_ids = result_wo_summary.sequences[0][len(wo_summary_token_ids):]
-        completion_wo_summary = tokenizer.decode(wo_summary_generated_ids, skip_special_tokens=True)
-
-        # 🔍 **Evaluate Exact Match (EM) and F1 Scores**
-        em_w_summary, f1_w_summary = evaluate_em_f1(completion_w_summary, answer.strip())
-        em_wo_summary, f1_wo_summary = evaluate_em_f1(completion_wo_summary, answer.strip())
-
-        # 🏷 **Determine final_summary based on conditions**
-        if (em_wo_summary == 1 and em_wo_summary > em_w_summary) or (f1_wo_summary > f1_w_summary) or (f1_wo_summary == f1_w_summary):
+        # Determine final_summary
+        if (em_wo == 1 and em_wo > em_w) or (f1_wo > f1_w) or (f1_wo == f1_w):
             final_summary = ""
         else:
             final_summary = summary
 
-        # 🔄 **Store results**
-        processed_results.append({
+        results.append({
             "query": query,
             "passages": passages,
-            "summary": summary, 
-            "final_summary": final_summary, 
+            "summary": summary,
+            "final_summary": final_summary,
             "answer": answer,
             "generated_results": {
                 "w_summary": {
                     "completion": completion_w_summary,
-                    "em": em_w_summary,
-                    "f1": f1_w_summary
+                    "em": em_w,
+                    "f1": f1_w
                 },
                 "wo_summary": {
                     "completion": completion_wo_summary,
-                    "em": em_wo_summary,
-                    "f1": f1_wo_summary
+                    "em": em_wo,
+                    "f1": f1_wo
                 }
             }
         })
 
-    return processed_results
+    return results
+
+def generate_answer_and_do_scoring(
+    dataset: Dataset,
+    query_col: str, 
+    summary_col: str, 
+    label_col: str, 
+    passages_col: str,
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    max_new_tokens: int = 52, 
+    max_source_length: int = 512
+):
+    config = detect_device()
+    results = []
+
+    for i in tqdm(range(len(dataset)), desc="Generating responses with summary only"):
+        query = dataset[query_col][i]
+        summary = dataset[summary_col][i]
+        label = dataset[label_col][i]
+        passages = dataset[passages_col][i]
+
+        prompt = f"Konteks: {summary}\nBerdasarkan konteks sebelumnya, jawab pertanyaan berikut. Pertanyaan: {query}"
+        completion = generate_completion(prompt, model, tokenizer, config.device_type, max_new_tokens, max_source_length)
+        em, f1 = evaluate_em_f1(completion.strip(), label.strip())
+
+        results.append({
+            "query": query,
+            "passages": passages,
+            "summary": summary,
+            "label": label,
+            "generated_answer": completion,
+            "em": em,
+            "f1": f1,
+        })
+
+    return results

@@ -110,17 +110,23 @@ def format_chat_prompt(messages: List[Dict[str, str]],
 def prepare_inputs(
     text: str,
     tokenizer: AutoTokenizer,
-    device_type: DeviceType
+    device_type: DeviceType, 
+    max_length: int = None
 ) -> Dict[str, torch.Tensor]:
     """Prepare model inputs with proper device placement"""
-
+    
+    tokenize_kwargs = {}
+    if max_length is not None:
+        tokenize_kwargs = {'max_length':max_length}
+    
     inputs = tokenizer(
         text,
         return_tensors="pt",
         # return_offsets_mapping=True,
         padding=True,  # Padding di awal teks (sisi kiri)
         truncation=True, 
-        add_special_tokens=False
+        add_special_tokens=False, 
+        **tokenize_kwargs
     )
     
     # Remove the first token (always duplicate <|begin_of_text|>)
