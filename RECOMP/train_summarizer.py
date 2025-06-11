@@ -275,7 +275,7 @@ class DataTrainingArguments:
         },
     )
     source_prefix: Optional[str] = field(
-        default="Rangkum Dokumen agar bisa menjawab Pertanyaan. Biarkan Rangkuman kosong jika Dokumen tidak bisa menjawab.\n", metadata={"help": "A prefix to add before every source text (useful for T5 models)."}
+        default="", metadata={"help": "A prefix to add before every source text (useful for T5 models)."}
     )
 
     forced_bos_token: Optional[str] = field(
@@ -457,7 +457,7 @@ def main():
                 " model's position encodings by passing `--resize_position_embeddings`."
             )
 
-    prefix = data_args.source_prefix if data_args.source_prefix is not None else "Rangkum: "
+    prefix = data_args.source_prefix if data_args.source_prefix is not None else "Rangkum Dokumen agar bisa menjawab Pertanyaan. Biarkan Rangkuman kosong jika Dokumen tidak bisa menjawab.\n"
     print("KONFIGURASI PREFIX", "="*40)
     print(prefix)
     print("="*60)
@@ -725,7 +725,7 @@ def main():
                 )
                 predictions = [pred.strip() for pred in predictions]
                 output_prediction_file = os.path.join(training_args.output_dir, "generated_predictions.txt")
-                with open(output_prediction_file, "w") as writer:
+                with open(output_prediction_file, "w", encoding="utf-8", errors="replace") as writer:
                     writer.write("\n".join(predictions))
 
     kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "summarization"}
