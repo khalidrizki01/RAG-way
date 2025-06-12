@@ -5,25 +5,59 @@ from tqdm import tqdm
 import torch
 import gc
 
-def build_prompts(batch_data, query_col, psgs_col, tokenizer):
-    """Buat prompt untuk setiap baris data."""
-    batch_texts = []
+def prepare_truncated_prompt(passages, query, teacher_tokenizer, student_tokenizer, max_source_length, return_truncated_passages=False):
+    qwen_instruction = f'\n\nRingkaslah teks di atas menjadi maksimal 2 kalimat (40 kata) agar menjawab pertanyaan secara mendetail. TANPA PENGANTAR. Pertanyaan: "{query}'
+    t5_instruction = f"Rangkum Dokumen agar bisa menjawab Pertanyaan.\nPertanyaan: {query}\nDokumen:\nRangkuman: "
+    instr_len = len(student_tokenizer(t5_instruction, add_special_tokens=False)['input_ids'])
+
+    available_len = max_source_length - instr_len
+
+    truncated_passages = student_tokenizer.decode(
+        student_tokenizer(passages, max_length=available_len, truncation=True, add_special_tokens=False)['input_ids'],
+        skip_special_tokens=True
+    )
+
+    messages = [{"role": "user", "content": truncated_passages + qwen_instruction}]
+    formatted_prompt = format_chat_prompt(messages, teacher_tokenizer)
+
+    if return_truncated_passages:
+        return formatted_prompt, truncated_passages
+    else:
+        return formatted_prompt
+
+def generate_batch_prompts(batch_data, query_col, psgs_col, teacher_tokenizer, student_tokenizer, max_source_length=512, return_truncated_passages=True):
+    """Buat prompt yang sudah di-truncate dan diformat untuk setiap baris data."""
+    batch_prompts = []
+    truncated_passages_list = []
+
     for row in batch_data:
         passages = row[psgs_col]
         query = row[query_col]
-        messages = [
-            {
-                "role": "user",
-                "content": f'{passages}\n\nRingkaslah teks di atas menjadi kurang dari 2 kalimat (40 kata) agar menjawab pertanyaan secara mendetail. TANPA PENGANTAR. Pertanyaan: "{query}"'
-            }
-        ]
-        formatted_prompt = format_chat_prompt(messages, tokenizer)
-        batch_texts.append(formatted_prompt)
-    return batch_texts
+        result = prepare_truncated_prompt(
+            passages=passages,
+            query=query,
+            teacher_tokenizer=teacher_tokenizer,
+            student_tokenizer=student_tokenizer,
+            max_source_length=max_source_length,
+            return_truncated_passages=return_truncated_passages
+        )
+        if return_truncated_passages:
+            prompt, truncated_passages = result
+            truncated_passages_list.append(truncated_passages)
+        else:
+            prompt = result
 
-def generate_summaries(model, tokenizer, batch_texts, max_new_tokens, temperature, max_source_length=None):
+        batch_prompts.append(prompt)
+
+    if return_truncated_passages:
+        return batch_prompts, truncated_passages_list
+    else:
+        return batch_prompts
+
+
+def generate_summaries(model, tokenizer, batch_texts, max_new_tokens, temperature):
     """Generate summary untuk batch prompt."""
-    inputs = prepare_inputs(batch_texts, tokenizer, DeviceType.CUDA, max_length=max_source_length)
+    inputs = prepare_inputs(batch_texts, tokenizer, DeviceType.CUDA)
     token_ids = inputs["input_ids"]
     summaries = []
 
@@ -56,16 +90,16 @@ def cleanup_cuda():
     gc.collect()
 
 def generate_summary_dataset(
-    model,
     dataset: Dataset, 
     query_col: str, 
     psgs_col: str, 
-    tokenizer: AutoTokenizer,
+    model: AutoModelForCausalLM,
+    teacher_tokenizer: AutoTokenizer,
+    student_tokenizer: AutoTokenizer, 
     batch_size: int = 4,
-    max_new_tokens: int = 50,
-    temperature: float = 0, 
-    summary_col: str = "summary", 
-    max_source_length: int = 512
+    max_new_tokens: int = 52,
+    temperature: float = 0.7, 
+    create_truncated_psg_column: bool = True
 ):
     """
     Merangkum kolom 'top_5_combined' menjadi teks pendek 2 kalimat untuk setiap row.
@@ -82,14 +116,15 @@ def generate_summary_dataset(
     """
     try:
         # Deteksi perangkat dan muat model serta tokenizer
-        if model is None or tokenizer is None:
-            raise ValueError("Harap memasukkan model dan tokenizer LLM")
+        if model is None or teacher_tokenizer is None or student_tokenizer is None:
+            raise ValueError("Harap memasukkan model teacher LLM, tokenizer LLM")
 
         # Pastikan model dalam mode evaluasi untuk inference
         model.eval()
 
         # List untuk menyimpan ringkasan
         summaries = []
+        truncated_passages_all = [] if create_truncated_psg_column else None
 
         # Proses dataset dalam batch
         num_batches = (len(dataset) + batch_size - 1) // batch_size  # Hitung jumlah batch
@@ -98,8 +133,21 @@ def generate_summary_dataset(
             end_idx = min(start_idx + batch_size, len(dataset))
             batch_data = dataset.select(range(start_idx, end_idx))
 
-            batch_texts = build_prompts(batch_data, query_col, psgs_col, tokenizer)
-            batch_summaries = generate_summaries(model, tokenizer, batch_texts, max_new_tokens, temperature, max_source_length=max_source_length)
+            if create_truncated_psg_column:
+                batch_prompts, batch_truncated = generate_batch_prompts(
+                    batch_data, query_col, psgs_col, teacher_tokenizer, student_tokenizer,
+                    max_source_length=512,
+                    return_truncated_passages=True
+                )
+                truncated_passages_all.extend(batch_truncated)
+            else:
+                batch_prompts = generate_batch_prompts(
+                    batch_data, query_col, psgs_col, teacher_tokenizer, student_tokenizer,
+                    max_source_length=512,
+                    return_truncated_passages=False
+                )
+
+            batch_summaries = generate_summaries(model, teacher_tokenizer, batch_prompts, max_new_tokens, temperature)
             summaries.extend(batch_summaries)
 
             # Bersihkan variabel yang tidak diperlukan
@@ -107,7 +155,9 @@ def generate_summary_dataset(
             cleanup_cuda()
 
         # Tambahkan kolom baru 'summary' ke dataset
-        dataset = dataset.add_column(summary_col, summaries)
+        dataset = dataset.add_column("summary", summaries)
+        if create_truncated_psg_column:
+            dataset = dataset.add_column("truncated_passages", truncated_passages_all)
         cleanup_cuda()
         return dataset
 

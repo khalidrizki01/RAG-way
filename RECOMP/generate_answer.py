@@ -115,6 +115,10 @@ def generate_completion(
 
 def generate_answers_and_compare_between_with_and_without_summary(
     dataset: Dataset,
+    passages_column:str,
+    query_column: str, 
+    label_column: str, 
+    summary_column: str,  
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
     max_new_tokens: int = 52,
@@ -128,10 +132,10 @@ def generate_answers_and_compare_between_with_and_without_summary(
     results = []
 
     for i in tqdm(range(len(dataset)), desc="Generating responses (w/ & wo/ summary)"):
-        query = dataset['query'][i]
-        summary = dataset['summary'][i]
-        answer = dataset['answer'][i]
-        passages = dataset['formatted_passages'][i]
+        query = dataset[query_column][i]
+        summary = dataset[summary_column][i]
+        answer = dataset[label_column][i]
+        passages = dataset[passages_column][i]
 
         # Generate with summary
         prompt_w_summary = build_prompt(query, summary)
