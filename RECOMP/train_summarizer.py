@@ -66,35 +66,50 @@ except (LookupError, OSError):
 # A list of all multilingual tokenizer which require lang attribute.
 MULTILINGUAL_TOKENIZERS = [MBartTokenizer, MBartTokenizerFast, MBart50Tokenizer, MBart50TokenizerFast]
 
+import os
+import json
+from transformers import TrainerCallback
+
 class LossLoggerCallback(TrainerCallback):
     def __init__(self, output_path):
         self.output_path = output_path
+        self.step_logs = []  # Menyimpan loss per step
         self.epoch_logs = []
-        self._loss_sum = 0.0
-        self._loss_count = 0
 
     def on_log(self, args, state, control, logs=None, **kwargs):
-        if logs is not None and "loss" in logs and state.epoch is not None:
-            self._loss_sum += logs["loss"]
-            self._loss_count += 1
+        if logs is not None and "loss" in logs:
+            log_entry = {
+                "step": state.global_step,
+                "epoch": float(state.epoch) if state.epoch is not None else None,
+                "loss": round(logs["loss"], 4)
+            }
+            self.step_logs.append(log_entry)
 
     def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        # Optional: Simpan ringkasan per epoch saat evaluasi
         if metrics is not None and state.epoch is not None and float(state.epoch).is_integer():
-            avg_train_loss = self._loss_sum / self._loss_count if self._loss_count > 0 else None
+            # Ambil average train loss dari step_logs untuk epoch ini
+            current_epoch = int(state.epoch)
+            epoch_losses = [
+                log["loss"] for log in self.step_logs if log["epoch"] is not None and int(log["epoch"]) == current_epoch
+            ]
+            avg_train_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else None
+
             log = {
-                "epoch": int(state.epoch),
+                "epoch": current_epoch,
                 "train_loss": round(avg_train_loss, 4) if avg_train_loss else None,
                 "eval_loss": metrics.get("eval_loss"),
                 "eval_gen_len": metrics.get("gen_len")
             }
             self.epoch_logs.append(log)
-            # Reset akumulator untuk epoch berikutnya
-            self._loss_sum = 0.0
-            self._loss_count = 0
 
     def on_train_end(self, args, state, control, **kwargs):
+        with open(os.path.join(self.output_path, "loss_per_step.json"), "w") as f:
+            json.dump(self.step_logs, f, indent=4)
+
         with open(os.path.join(self.output_path, "loss_per_epoch.json"), "w") as f:
             json.dump(self.epoch_logs, f, indent=4)
+
 
 
 @dataclass
@@ -325,7 +340,8 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    training_args.logging_strategy = "epoch"
+    training_args.logging_strategy = "steps"
+    training_args.logging_steps = 10
     training_args.eval_strategy= "epoch" if training_args.do_eval else 'no'
     training_args.fp16 = True
 
