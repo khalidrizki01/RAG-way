@@ -457,7 +457,7 @@ def main():
                 " model's position encodings by passing `--resize_position_embeddings`."
             )
 
-    prefix = data_args.source_prefix if data_args.source_prefix is not None else "Rangkum Dokumen agar bisa menjawab Pertanyaan. Biarkan Rangkuman kosong jika Dokumen tidak bisa menjawab.\n"
+    prefix = data_args.source_prefix if data_args.source_prefix is not None else "Rangkum Dokumen agar bisa menjawab Pertanyaan.\n"
     print("KONFIGURASI PREFIX", "="*40)
     print(prefix)
     print("="*60)
