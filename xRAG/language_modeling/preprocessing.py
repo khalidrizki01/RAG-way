@@ -167,7 +167,7 @@ def _encode_chat_format(
     else:
         raise ValueError(f"Invalid chat_format: {chat_format}. Must be 'qwen' or 'llama'.")
     
-    example_text = _concat_messages(messages, llm_tokenizer=llm_tokenizer).strip() + "<|im_start|>assistant\nJawaban: "
+    example_text = _concat_messages(messages, llm_tokenizer=llm_tokenizer).strip()
     tokenized_example = llm_tokenizer(example_text, return_tensors='pt', max_length=max_seq_length, truncation=True, add_special_tokens=False)
     # KALAU BACKGROUND KEPANJANGAN (melebihi max_sequence_length), MAKA CONTENT DR ASSISTANT TIDAK AKAN TERTOKENISASI KARENA SUDAH KEPOTONG OLEH TRUNCATION
     # alhasil akan kena filter oleh train_dataset.filter(lambda example: (example['labels'] != -100).any())
