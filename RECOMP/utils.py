@@ -24,7 +24,7 @@ def detect_device() -> ModelConfig:
     if torch.cuda.is_available():
         return ModelConfig(
             device_type=DeviceType.CUDA,
-            dtype=torch.bfloat16,  # Using float16 for CUDA by default
+            dtype=torch.bfloat16,
             device_map=None  # Disable automatic mapping to ensure manual placement
         )
     else:
@@ -90,20 +90,6 @@ def format_chat_prompt(messages: List[Dict[str, str]],
                 **tokenize_kwargs
             )
             
-        # else:
-        #     formatted_prompt = ""
-        #     for message in messages:
-        #         role = message['role']
-        #         content = message['content']
-        #         if role == 'sistem':
-        #             formatted_prompt += f"<|sistem|>\n{content}\n"
-        #         elif role == 'pengguna':
-        #             formatted_prompt += f"<|pengguna|>\n{content}\n"
-        #         elif role == 'asisten':
-        #             formatted_prompt += f"<|asisten|>\n{content}\n"
-        #         else:
-        #             raise ValueError(f"Peran tak diketahui: {role}")
-        #     return formatted_prompt + "<|asisten|>\n"
     except Exception as e:
         raise RuntimeError(f"Error formatting chat prompt: {e}")
     
@@ -122,17 +108,14 @@ def prepare_inputs(
     inputs = tokenizer(
         text,
         return_tensors="pt",
-        # return_offsets_mapping=True,
-        padding=True,  # Padding di awal teks (sisi kiri)
+        padding=True,  
         truncation=True, 
         add_special_tokens=False, 
         **tokenize_kwargs
     )
-    
-    # Remove the first token (always duplicate <|begin_of_text|>)
+
     inputs['input_ids'] = inputs['input_ids']
     inputs['attention_mask'] = inputs['attention_mask']
-    # inputs['offset_mapping'] = inputs['offset_mapping']
     
     # Move tensors to appropriate device
     device = device_type.value
@@ -144,7 +127,7 @@ def prepare_inputs(
     return inputs
 
 def get_chat_logprobs(
-    messages: List[Dict[str, str]], # system, user
+    messages: List[Dict[str, str]], 
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
     config: ModelConfig,
@@ -230,21 +213,12 @@ def get_chat_logprobs(
                                 log_probs[current_token_id].item()
                             )
 
-                            # # Get top alternatives
-                            # top_values, top_indices = torch.topk(log_probs, 5)
-                            # top_logprobs = {
-                            #     tokenizer.decode([idx]): prob.item()
-                            #     for idx, prob in zip(top_indices, top_values)
-                            # }
-                            # gen_top_logprobs.append(top_logprobs)
 
                 # Create final result
                 result = {
                     "tokens": generated_tokens,
                     "token_ids": generated_ids,
                     "logprobs": gen_logprobs,
-                    # "top_logprobs": gen_top_logprobs,
-                    # "text": generated_text,  # tokenizer.decode(token_ids) +
                     "completion": generated_text,
                     "prompt": formatted_prompt if include_prompt else None
                 }
