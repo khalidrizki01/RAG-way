@@ -6,7 +6,7 @@ import re
 import string
 from collections import Counter
 from nltk.corpus import stopwords
-from typing import Optional
+from typing import Optional, Any, Union, List
 
 try: 
     STOPWORDS_ID = set(stopwords.words('indonesian'))
@@ -178,11 +178,12 @@ def generate_answers_and_compare_between_with_and_without_summary(
 def generate_answer_and_do_scoring(
     dataset: Dataset,
     query_col: str, 
-    summary_col: str, 
+    filtered_contexts_col: str, # passages yang telah diolah (RECOMP:dirangkum, CRAG:difilter)
     label_col: str, 
-    passages_col: str,
+    
     model: AutoModelForCausalLM,
     tokenizer: AutoTokenizer,
+    original_passages_col: Optional[Union[str, List[Any]]] = None, 
     max_new_tokens: int = 52, 
     max_source_length: int = 512
 ):
@@ -191,22 +192,28 @@ def generate_answer_and_do_scoring(
 
     for i in tqdm(range(len(dataset)), desc="Generating responses with summary only"):
         query = dataset[query_col][i]
-        summary = dataset[summary_col][i]
+        filtered_context = dataset[filtered_contexts_col][i]
         label = dataset[label_col][i]
-        passages = dataset[passages_col][i]
+        if original_passages_col is not None:
+            original_passages = dataset[original_passages_col][i]
 
-        prompt = f"Konteks: {summary}\nBerdasarkan konteks sebelumnya, jawab pertanyaan berikut. Pertanyaan: {query}"
+        prompt = f"Konteks: {filtered_context}\nBerdasarkan konteks, jawab pertanyaan dalam dua kalimat. Pertanyaan: {query}"
         completion = generate_completion(prompt, model, tokenizer, config.device_type, max_new_tokens, max_source_length)
         em, f1 = evaluate_em_f1(completion.strip(), label.strip())
 
-        results.append({
+        result = {
             "query": query,
-            "passages": passages,
-            "summary": summary,
+            "passages": original_passages,
+            "filtered_context": filtered_context,
             "label": label,
             "generated_answer": completion,
             "em": em,
             "f1": f1,
-        })
+        }
+
+        if original_passages_col is not None:
+            result["passages"] = original_passages
+
+        results.append(result)
 
     return results
