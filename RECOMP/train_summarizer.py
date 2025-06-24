@@ -15,7 +15,7 @@ from typing import Optional
 import ast
 import time
 import json
-
+import random
 import datasets
 # import evaluate
 import nltk  # Here to have a nice missing dependency error message early on
@@ -63,8 +63,18 @@ except (LookupError, OSError):
     with FileLock(".lock") as lock:
         nltk.download("punkt", quiet=True)
 
-# A list of all multilingual tokenizer which require lang attribute.
-MULTILINGUAL_TOKENIZERS = [MBartTokenizer, MBartTokenizerFast, MBart50Tokenizer, MBart50TokenizerFast]
+INSTRUCTIONS = [
+    "Ringkas Konteks supaya menjawab soal.\nKonteks: {context}\nSoal: {query}\nRingkasan: ",
+    "{context}\nSusun ikhtisar dari informasi di atas guna menjawab Soal.\nSoal: {query}\nIkhtisar: ",
+    "Tulis ulang isi Bacaan untuk merespons Tanya.\nBacaan: {context}\nPertanyaan: {query}\nRespons: ",
+    "{context}\nBuat Rangkuman terhadap materi di atas berdasarkan Pertanyaan.\nTanya: {query}\nRangkuman: ",
+    "Rangkai kembali Teks agar selaras dengan Isu.\nTeks: {context}\nIsu: {query}\nRangkaian: ",
+    "{context}\nSingkatkan bacaan untuk menjawab Isu.\nIsu: {query}\nRingkasan: ",
+    "Rangkum Informasi agar cocok dengan fokus Pertanyaan.\nInformasi: {context}\nTanya: {query}\nRangkuman: ",
+    "Catatan: {context}\nSederhanakan Catatan sesuai tujuan Tanya.\nTanya: {query}\nSederhana: ",
+    "Buat Ringkasan dari Tulisan agar relevan dengan Soal.\nTulisan: {context}\nSoal: {query}\nRingkasan: ",
+    "Konteks: {context}\nRangkai ulang Konteks demi membalas Isu.\nIsu: {query}\nTanggapan: "
+]
 
 import os
 import json
@@ -90,14 +100,16 @@ class LossLoggerCallback(TrainerCallback):
         if metrics is not None and state.epoch is not None and float(state.epoch).is_integer():
             # Ambil average train loss dari step_logs untuk epoch ini
             current_epoch = int(state.epoch)
-            epoch_losses = [
-                log["loss"] for log in self.step_logs if log["epoch"] is not None and int(log["epoch"]) == current_epoch
+            epoch_step_logs = [
+                log for log in self.step_logs
+                if log["epoch"] is not None and int(log["epoch"]) == current_epoch
             ]
-            avg_train_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else None
+
+            last_step_log = max(epoch_step_logs, key=lambda x: x["step"], default=None)
 
             log = {
                 "epoch": current_epoch,
-                "train_loss": round(avg_train_loss, 4) if avg_train_loss else None,
+                "train_loss": last_step_log["loss"] if last_step_log else None,
                 "eval_loss": metrics.get("eval_loss"),
                 "eval_gen_len": metrics.get("gen_len")
             }
@@ -496,21 +508,6 @@ def main():
         logger.info("There is nothing to do. Please pass `do_train`, `do_eval` and/or `do_predict`.")
         return
 
-    if isinstance(tokenizer, tuple(MULTILINGUAL_TOKENIZERS)):
-        assert (
-            data_args.lang is not None
-        ), f"{tokenizer.__class__.__name__} is a multilingual tokenizer which requires --lang argument"
-
-        tokenizer.src_lang = data_args.lang
-        tokenizer.tgt_lang = data_args.lang
-
-        # For multilingual translation models like mBART-50 and M2M100 we need to force the target language token
-        # as the first generated token. We ask the user to explicitly provide this as --forced_bos_token argument.
-        forced_bos_token_id = (
-            tokenizer.lang_code_to_id[data_args.forced_bos_token] if data_args.forced_bos_token is not None else None
-        )
-        model.config.forced_bos_token_id = forced_bos_token_id
-
     # Get the column names for input/target.
     dataset_columns = None
     if data_args.text_column is None:
@@ -548,15 +545,20 @@ def main():
         # remove pairs where at least one record is None
         inputs, targets, questions = [], [], []
         for i in range(len(examples[query_column])):
-            input_txt = "Pertanyaan: {}\n Dokumen: {}\n Rangkuman: ".format(
-                examples[query_column][i],
-                examples[text_column][i],
-            )
-            inputs.append(input_txt)
-            targets.append(examples[summary_column][i])
-            questions.append(examples[query_column][i])
+            query = examples[query_column][i]
+            context = examples[text_column][i]
+            target = examples[summary_column][i]
 
-        inputs = [prefix + inp for inp in inputs]
+            # Pilih salah satu template secara random
+            template = random.choice(INSTRUCTIONS)
+
+            # Format string dengan query dan context
+            formatted_input = template.format(query=query, context=context)
+
+            inputs.append(formatted_input)
+            targets.append(target)
+            questions.append(query)
+
         # print(inputs)
         model_inputs = tokenizer(inputs, max_length=data_args.max_source_length, padding=padding, truncation=True)
 
