@@ -97,20 +97,10 @@ class LossLoggerCallback(TrainerCallback):
             self.step_logs.append(log_entry)
 
     def on_evaluate(self, args, state, control, metrics=None, **kwargs):
-        # Optional: Simpan ringkasan per epoch saat evaluasi
+
         if metrics is not None and state.epoch is not None and float(state.epoch).is_integer():
-            # Ambil average train loss dari step_logs untuk epoch ini
-            current_epoch = int(state.epoch)
-            epoch_step_logs = [
-                log for log in self.step_logs
-                if log["epoch"] is not None and int(log["epoch"]) == current_epoch
-            ]
-
-            last_step_log = max(epoch_step_logs, key=lambda x: x["step"], default=None)
-
             log = {
-                "epoch": current_epoch,
-                "train_loss": last_step_log["loss"] if last_step_log else None,
+                "epoch": int(state.epoch),
                 "eval_loss": metrics.get("eval_loss"),
                 "eval_gen_len": metrics.get("gen_len")
             }
