@@ -54,7 +54,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 try:
-    nltk.data.find("tokenizers/punkt")
+    nltk.data.find("tokenizers/punkt_tab")
 except (LookupError, OSError):
     if is_offline_mode():
         raise LookupError(
@@ -62,6 +62,7 @@ except (LookupError, OSError):
         )
     with FileLock(".lock") as lock:
         nltk.download("punkt", quiet=True)
+        nltk.download("punkt_tab", quiet=True)
 
 INSTRUCTIONS = [
     "Ringkas Konteks supaya menjawab soal.\nKonteks: {context}\nSoal: {query}\nRingkasan: ",
