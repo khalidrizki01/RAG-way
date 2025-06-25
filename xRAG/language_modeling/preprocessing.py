@@ -4,11 +4,19 @@ from datasets import Dataset, load_from_disk, load_dataset
 XRAG_TOKEN = "<xRAG>" 
 
 ParaphraseInstructions = [
-    'Latar belakang: {xrag_token} memiliki arti yang sama dengan',
-    "Latar belakang: {xrag_token} Bisakah kamu mengungkapkan kalimat di atas dengan kata-katamu sendiri?",
-    "Latar belakang: {xrag_token} merupakan parafrasa dari apa?",
-    "Kalau ditelaah lebih lanjut, latar belakang: {xrag_token} hanyalah versi lain dari:",
-    "Inti dari latar belakang: {xrag_token} tergambar kembali dalam pernyataan berikut:"
+    'Informasi: {xrag_token} berarti sama dengan',
+    "Konteks: {xrag_token} Bisakah kamu mengungkapkan kalimat di atas dengan kata-katamu sendiri?",
+    "Penjelasan: {xrag_token} Harap berikan penafsiran ulang dari teks penjelasan sebelumnya.",
+    "Pernyataan ini pada dasarnya setara:\n(1) {xrag_token}\n(2)",
+    "Konteks: {xrag_token} adalah parafrase dari apa?",
+    "Penjelasan: {xrag_token} Bisakah kamu memberikan versi yang berbeda dari kalimat penjelasan di atas?",
+    "Dengan kata lain, informasi: {xrag_token} hanyalah cara lain untuk mengatakan:",
+    "Kamu menyampaikan poin yang sama baik kamu mengatakan konteks: {xrag_token} atau",
+    "Penjelasan: {xrag_token} Setelah mengurai ide-ide dalam informasi di atas, kita mendapatkan:",
+    "Informasi: {xrag_token} Harap tawarkan pernyataan ulang dari kalimat penjelasan yang baru saja saya baca.",
+    "Konteks: {xrag_token}, yang juga berarti:",
+    "Hilangkan misterinya, dan kamu akan menemukan informasi: {xrag_token} hanyalah versi lain dari:",
+    "Esensi dari konteks: {xrag_token} terulang lagi dalam pernyataan berikut:",
 ]
 
 def load_and_format_dataset(dataset_path, query_col, answer_col, psg_col, task_type, max_rows=None):
@@ -85,34 +93,6 @@ def process_pretrain_dataset(split_data, psg_col):
     
     return formatted_data
 
-def split_multiple_backgrounds(backgrounds, retriever_tokenizer, total_max_len, single_max_len, single_min_len=20):
-    """
-    Membagi beberapa background menjadi potongan-potongan kecil.
-    
-    Args:
-        backgrounds (list): List dari background (list string).
-        tokenizer: Tokenizer yang digunakan.
-        total_max_len: Panjang maksimum token untuk masing-masing background.
-        single_max_len: Panjang maksimum untuk setiap potongan.
-        single_min_len: Panjang minimum untuk sebuah potongan.
-    
-    Return:
-        list: List potongan-potongan background, masing-masing dipotong sesuai dengan panjang token yang ditentukan.
-    """
-    all_sharded_backgrounds = []
-    
-    for background in backgrounds:
-        ids = retriever_tokenizer(background, add_special_tokens=False, max_length=total_max_len, truncation=True).input_ids
-        background_chunks = [ids[idx:idx+single_max_len] for idx in range(0, len(ids), single_max_len)]
-        
-        # Menghapus chunk terakhir jika terlalu kecil
-        if len(background_chunks[-1]) <= single_min_len and len(background_chunks) > 1:
-            background_chunks = background_chunks[:-1]
-        
-        all_sharded_backgrounds.extend([retriever_tokenizer.decode(x) for x in background_chunks])
-    
-    return all_sharded_backgrounds
-
 def _concat_messages_llama(messages, llm_tokenizer):
 
     message_text = "<|begin_of_text|>"
@@ -146,7 +126,7 @@ def _encode_chat_format(
         messages,
         llm_tokenizer,
         max_seq_length,
-        chat_format='llama',
+        chat_format='qwen',
     ):
     """
     encode messages to input_ids and make non-assistant part
@@ -154,7 +134,7 @@ def _encode_chat_format(
     Args:
         messages (list): list of dict with 'role' and 'content' field
         tokenizer: llm tokenizer
-        max_seq_lengh: maximun context length  
+        max_seq_length: maximun context length  
     
     Return:
         input_ids and labels
@@ -168,7 +148,7 @@ def _encode_chat_format(
         raise ValueError(f"Invalid chat_format: {chat_format}. Must be 'qwen' or 'llama'.")
     
     example_text = _concat_messages(messages, llm_tokenizer=llm_tokenizer).strip()
-    tokenized_example = llm_tokenizer(example_text, return_tensors='pt', max_length=max_seq_length, truncation=True, add_special_tokens=False)
+    tokenized_example = llm_tokenizer(example_text, return_tensors='pt', max_length=max_seq_length, padding=True, truncation=True, add_special_tokens=False)
     # KALAU BACKGROUND KEPANJANGAN (melebihi max_sequence_length), MAKA CONTENT DR ASSISTANT TIDAK AKAN TERTOKENISASI KARENA SUDAH KEPOTONG OLEH TRUNCATION
     # alhasil akan kena filter oleh train_dataset.filter(lambda example: (example['labels'] != -100).any())
     # dan itu gapapa, karena hanya menyusun sekitar 123 baris train dan 17 baris dev. masih ada 4419 baris untuk latihan dan 1126 baris untuk dev
@@ -215,11 +195,9 @@ def _encode_chat_format(
 def encode_with_chat_format_pretrain(
         example,
         llm_tokenizer,
-        retriever_tokenizer, 
         max_seq_length,
-        retrieval_context_length, 
         retrieval_embed_length,
-        chat_format='llama',
+        chat_format='qwen',
         ):
     """
     encode messages into input_ids and labels for paraphrase pretrain
@@ -229,13 +207,13 @@ def encode_with_chat_format_pretrain(
     """
 
     document = "passage: " + example['text'].strip()
-    truncated_document = truncate_using_retriever_tokenizer(retriever_tokenizer, document, retrieval_context_length)
+    # truncated_document = truncate_using_retriever_tokenizer(retriever_tokenizer, document, retrieval_context_length)
     xrag_token = " ".join([XRAG_TOKEN] * retrieval_embed_length)  
     instruction = random.choice(ParaphraseInstructions).format_map(dict(xrag_token=xrag_token))
 
     messages = [
         {"role":"user","content":instruction},
-        {"role":"assistant","content":truncated_document},
+        {"role":"assistant","content":document},  # truncated_document
     ]
 
     encoded = _encode_chat_format(
@@ -247,18 +225,19 @@ def encode_with_chat_format_pretrain(
     return {
         "xrag_input_ids":encoded['input_ids'],
         "xrag_labels":encoded['labels'],
-        "retriever_input_text":truncated_document,
+        "retriever_input_text":document,  # truncated_document
     }
+
+import random
+import copy
 
 def encode_with_chat_format_finetune(
         example, 
         llm_tokenizer,
         max_seq_length,
-        retrieval_context_length,
         use_rag_tuning=True,
         use_retriever_embed=False,
-        retriever_tokenizer=None,
-        chat_format='llama'
+        chat_format='qwen'
     ):
     """
     Fungsi untuk melakukan encoding dengan format chat, mendukung multiple background.
@@ -266,28 +245,34 @@ def encode_with_chat_format_finetune(
     messages, backgrounds = example['messages'], example['background']
 
     ret = {}
-    instruct = "Rujuklah latar belakang: "
-    question= "Pertanyaan: "
+    
+    # Menentukan template instruksi secara acak jika tidak diberikan
+    if instruction_templates is None:
+        instruction_templates = [
+            "Berdasarkan latar belakang berikut, {backgrounds} jawab pertanyaan ini. {query}",
+            "Lihat informasi berikut, {backgrounds} dan berikan jawaban Anda. {query}",
+            "Dengan latar belakang ini, {backgrounds} tolong jawab pertanyaan di bawah. {query}",
+            "Gunakan informasi berikut, {backgrounds} untuk menjawab pertanyaan. {query}"
+        ]
+    
+    # Memilih template instruksi secara acak
+    instruct = random.choice(instruction_templates)
 
     if use_rag_tuning and use_retriever_embed:
-        # # Split setiap background menjadi potongan-potongan lebih kecil jika panjangnya melebihi batas
-        # sharded_backgrounds = split_multiple_backgrounds(backgrounds, retriever_tokenizer, total_max_len=max_seq_length, single_max_len=retrieval_context_length)
-        # sharded_backgrounds = ["passage: "+background for background in sharded_backgrounds]
-        # num_split = len(sharded_backgrounds)  # Total jumlah potongan background
-        # ret['retriever_input_text'] = sharded_backgrounds
-        truncated_backgrounds = ["passage: " + truncate_using_retriever_tokenizer(retriever_tokenizer, background, retrieval_context_length) for background in backgrounds]
-        num_bg = len(truncated_backgrounds)  # Total jumlah potongan background
-        ret['retriever_input_text'] = truncated_backgrounds
+        formatted_backgrounds = ["passage: " + background for background in backgrounds]
+        num_bg = len(formatted_backgrounds)  # Total jumlah potongan background
+        ret['retriever_input_text'] = formatted_backgrounds
 
     if use_rag_tuning:
         # Penyematan token xrag untuk setiap background yang sudah dipotong
         _messages = copy.deepcopy(messages)
         xrag_tokens = " ".join([XRAG_TOKEN] * num_bg)
-        joined_background = " ".join(truncated_backgrounds)
+        joined_background = " ".join(formatted_backgrounds)
         
         for idx in range(len(_messages)):
             if _messages[idx]['role'] == 'user':
-                _messages[idx]['content'] = f"{instruct}{xrag_tokens}\n\n{question}{messages[idx]['content']}"
+                # Menggunakan instruksi yang dipilih acak dan memasukkan latar belakang ke dalam format
+                _messages[idx]['content'] = instruct.format_map({'backgrounds': xrag_tokens, 'query': messages[idx]['content']})
                 break
         # ret['xrag_messages']=_messages
         
@@ -299,16 +284,17 @@ def encode_with_chat_format_finetune(
         _messages = copy.deepcopy(messages)
         for idx in range(len(_messages)):
             if _messages[idx]['role'] == 'user':
-                _messages[idx]['content'] = f"{instruct}{joined_background}\n\n{question}{messages[idx]['content']}"
+                # Menggunakan instruksi yang dipilih acak dan latar belakang yang digabungkan
+                _messages[idx]['content'] = instruct.format_map({'backgrounds': joined_background, 'query': messages[idx]['content']})
                 break
         # ret['formatted_messages']= _messages
-        
+
         encoded_for_teacher_model = _encode_chat_format(_messages, llm_tokenizer, max_seq_length, chat_format=chat_format)
         ret['input_ids'] = encoded_for_teacher_model['input_ids']
         ret['labels'] = encoded_for_teacher_model['labels']
     
     return ret
-
+        
 def get_retrieval_embeds(retriever,input_ids,attention_mask=None):
     with torch.no_grad():
         embeds = retriever.get_doc_embedding(
