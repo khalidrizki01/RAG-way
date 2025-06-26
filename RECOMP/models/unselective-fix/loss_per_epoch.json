@@ -1,0 +1,52 @@
+[
+    {
+        "epoch": 1,
+        "eval_loss": 0.885487973690033,
+        "eval_gen_len": null
+    },
+    {
+        "epoch": 2,
+        "eval_loss": 0.8312128782272339,
+        "eval_gen_len": null
+    },
+    {
+        "epoch": 3,
+        "eval_loss": 0.7977619171142578,
+        "eval_gen_len": null
+    },
+    {
+        "epoch": 4,
+        "eval_loss": 0.7786944508552551,
+        "eval_gen_len": null
+    },
+    {
+        "epoch": 5,
+        "eval_loss": 0.7597708702087402,
+        "eval_gen_len": null
+    },
+    {
+        "epoch": 6,
+        "eval_loss": 0.7505595088005066,
+        "eval_gen_len": null
+    },
+    {
+        "epoch": 7,
+        "eval_loss": 0.747579038143158,
+        "eval_gen_len": null
+    },
+    {
+        "epoch": 8,
+        "eval_loss": 0.7385391592979431,
+        "eval_gen_len": null
+    },
+    {
+        "epoch": 9,
+        "eval_loss": 0.7362191677093506,
+        "eval_gen_len": null
+    },
+    {
+        "epoch": 10,
+        "eval_loss": 0.735078752040863,
+        "eval_gen_len": null
+    }
+]
