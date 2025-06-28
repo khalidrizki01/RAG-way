@@ -50,7 +50,7 @@ def stop_sequences_criteria(
     tokenizer: PreTrainedTokenizer,
     initial_decoder_input_length: int,
     batch_size: int,
-    stop_sequences: List[str] = ['\n', '.', ','],
+    stop_sequences: List[str] = [ '.'],  # '\n', ','
     ) -> StoppingCriteriaList:
     return StoppingCriteriaList(
         [

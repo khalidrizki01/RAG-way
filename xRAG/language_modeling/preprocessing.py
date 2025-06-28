@@ -246,17 +246,18 @@ def encode_with_chat_format_finetune(
 
     ret = {}
     
-    # Menentukan template instruksi secara acak jika tidak diberikan
-    if instruction_templates is None:
-        instruction_templates = [
-            "Berdasarkan latar belakang berikut, {backgrounds} jawab pertanyaan ini. {query}",
-            "Lihat informasi berikut, {backgrounds} dan berikan jawaban Anda. {query}",
-            "Dengan latar belakang ini, {backgrounds} tolong jawab pertanyaan di bawah. {query}",
-            "Gunakan informasi berikut, {backgrounds} untuk menjawab pertanyaan. {query}"
-        ]
+    # # Menentukan template instruksi secara acak jika tidak diberikan
+    # instruction_templates = [
+    #     "Berdasarkan latar belakang berikut, {backgrounds} jawab pertanyaan ini. {query}",
+    #     "Lihat informasi berikut, {backgrounds} dan berikan jawaban Anda. {query}",
+    #     "Dengan latar belakang ini, {backgrounds} tolong jawab pertanyaan di bawah. {query}",
+    #     "Gunakan informasi berikut, {backgrounds} untuk menjawab pertanyaan. {query}"
+    # ]
     
-    # Memilih template instruksi secara acak
-    instruct = random.choice(instruction_templates)
+    # # Memilih template instruksi secara acak
+    # instruct = random.choice(instruction_templates)
+
+    instruct = "Rujuklah latar belakang: {backgrounds} Pertanyaan: {query}"
 
     if use_rag_tuning and use_retriever_embed:
         formatted_backgrounds = ["passage: " + background for background in backgrounds]
