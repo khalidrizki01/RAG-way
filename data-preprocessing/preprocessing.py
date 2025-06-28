@@ -7,12 +7,14 @@ import torch
 def average_pool(last_hidden_states, attention_mask):
     last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
     return last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
-def rank_ctxs_by_query_similarity(query, ctxs, labels, tokenizer, model):
+def rank_ctxs_by_query_similarity(query, ctxs, labels, tokenizer, model, device='cuda'):
     if not ctxs:
         return []
 
     input_texts = ["query: " + query] + ["passage: " + c for c in ctxs]
     query_and_ctxs = tokenizer(input_texts, padding=True, truncation=True, max_length=512, return_tensors="pt")
+
+    query_and_ctxs = {key: value.to(device) for key, value in query_and_ctxs.items()}
 
     with torch.no_grad():
         outputs = model(**query_and_ctxs)
@@ -36,7 +38,8 @@ def apply_similarity_ranking_to_dataset(
     label_col: Optional[str] =None,
     output_col: str=None, 
     tokenizer = None,
-    model = None
+    model = None, 
+    device='cuda'
 ):
     ranked_units_all = []
 
@@ -50,7 +53,7 @@ def apply_similarity_ranking_to_dataset(
             units = example[text_col]
             labels = example[label_col]            
 
-        ranked_units = rank_ctxs_by_query_similarity(query, units, labels, tokenizer, model)
+        ranked_units = rank_ctxs_by_query_similarity(query, units, labels, tokenizer, model, device)
         ranked_units_all.append(ranked_units)
 
     dataset = dataset.add_column(output_col, ranked_units_all)
