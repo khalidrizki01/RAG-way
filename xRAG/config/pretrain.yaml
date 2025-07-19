@@ -1,0 +1,41 @@
+dataset_path : "khalidrizki/postretrieve-raw-dataset-v2"
+query_col : 'query'
+ans_col : 'label'
+psg_col : 'sorted_truncPassages'
+max_samples : null
+
+# model config
+model_dtype : 'bfloat16'
+
+seed: 42
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 8
+lr_scheduler_type: "linear"
+warmup_ratio: 0.03
+alpha_nll: 1.0
+
+# retriever config
+retriever_name_or_path: "intfloat/multilingual-e5-small"
+retrieval_context_length: 512
+
+# prompting config
+chat_format: "qwen"
+
+# output
+model_size: "1.7B"
+output_dir: "../output"
+
+# xrag
+update_projector_only: true
+save_embeddings_generated: false
+processing_steps_output_dir: "../../generated_data/xRAG-process"
+    
+# task config
+task_type: 'pretrain'
+model_name_or_path : "Qwen/Qwen3-1.7B"
+num_train_epochs : 10
+learning_rate : 0.05
+alpha_kl : None
+kl_temperature : 0.0
+max_seq_length : 600
+retrieval_embed_length : 1
