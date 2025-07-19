@@ -128,17 +128,7 @@ def _encode_chat_format(
         max_seq_length,
         chat_format='qwen',
     ):
-    """
-    encode messages to input_ids and make non-assistant part
 
-    Args:
-        messages (list): list of dict with 'role' and 'content' field
-        tokenizer: llm tokenizer
-        max_seq_length: maximun context length  
-    
-    Return:
-        input_ids and labels
-    """
     # _concat_messages = eval(f"_concat_messages_{chat_format}")
     if chat_format == 'llama':
         _concat_messages = _concat_messages_llama
@@ -156,40 +146,33 @@ def _encode_chat_format(
     input_ids = tokenized_example.input_ids
     labels = input_ids.clone()
     
-    # mask the non-assistant part for avoiding loss
-    for message_idx, message in enumerate(messages):
-        if message["role"] != "assistant":
-            if message_idx == 0:
-                message_start_idx = 0
-            else:
-                message_start_idx = llm_tokenizer(
-                    _concat_messages(messages[:message_idx]), llm_tokenizer=llm_tokenizer, return_tensors='pt', max_length=max_seq_length, truncation=True
-                ).input_ids.shape[1]
-            
-            if chat_format in ['llama', 'qwen']:
-                # Karena elemen messages bergantian antara role:user dengan role:assistant, 
-                # ambil messages_so_far sebagai messages indeks role:user saja
-                messages_so_far = _concat_messages(messages[:message_idx+1], llm_tokenizer=llm_tokenizer)         
+    # Temukan indeks pertama dari id 151668
+    stop_index = (input_ids == 151668).nonzero(as_tuple=True)[1].item() if (input_ids == 151668).any() else -1
+    
+    # Jika ada id 151668 dalam input_ids, atur label hingga indeks tersebut menjadi -100
+    if stop_index != -1:
+        labels[:, :stop_index+1] = -100
 
-            # Tokenisasi message role:user
-            message_end_idx = llm_tokenizer(
-                messages_so_far,
-                return_tensors='pt', 
-                max_length=max_seq_length,
-                truncation=True, 
-                add_special_tokens=False
-            ).input_ids.shape[1]  # Panjang keseluruhan message role:user diidentifikasi
+        # Jika ada id 271 setelah 151668, beri label -100
+        next_index = stop_index + 1
+        if next_index < input_ids.shape[1] and input_ids[0, next_index] == 271:
+            labels[:, next_index] = -100
 
-            # Labels untuk message role:user di-mask dengan -100
-            labels[:, message_start_idx:message_end_idx] = -100
-
-            if message_end_idx >= max_seq_length:
-                break
+    # Membagi input_ids menjadi dua bagian: yang tidak dimask dan yang dimask
+    prompt_ids = input_ids[:, :next_index+1]  # Bagian sebelum 151668
+    label_ids = input_ids[:, next_index+1:]  # Bagian setelah 151668 yang sudah dimask (-100)
+    # Decoding untuk mendapatkan teks dari prompt dan label
+    prompt_text = llm_tokenizer.decode(prompt_ids[0], skip_special_tokens=False)
+    label_text = llm_tokenizer.decode(label_ids[0], skip_special_tokens=False)
     
     # assert tokenizer.eos_token_id in input_ids, input_ids
     return {
         "input_ids":input_ids.flatten(),
         "labels":labels.flatten(),
+        "prompt_ids": prompt_ids,
+        "label_ids": label_ids, 
+        "prompt_text": prompt_text,  
+        "label_text": label_text,  
     }
 
 def encode_with_chat_format_pretrain(
@@ -226,6 +209,10 @@ def encode_with_chat_format_pretrain(
         "xrag_input_ids":encoded['input_ids'],
         "xrag_labels":encoded['labels'],
         "retriever_input_text":document,  # truncated_document
+        "prompt_ids": encoded['prompt_ids'],
+        "label_ids": encoded['label_ids'] ,
+        "prompt_text": encoded['prompt_text'], 
+        "label_text": encoded['label_text']
     }
 
 import random
@@ -378,13 +365,28 @@ def collator(samples,
         if labels is not None:
             labels = _padding(labels,padding_value=-100,padding_side=padding_side)
         return input_ids,attention_mask,labels
-    
+    # temp_batch_input_ids = [x[xrag_input_ids_col] for x in samples]
+    # print("before padding xrag_input_ids:")
+    # print(temp_batch_input_ids)
+    # print()
+    # temp_batch_labels = [x[xrag_labels_col] for x in samples]
+    # print('before padding xrag_labels:')
+    # print(temp_batch_labels)
+    # print()
     xrag_input_ids, xrag_attention_mask, xrag_labels = padding(
         input_ids=[x[xrag_input_ids_col] for x in samples],
         labels=[x[xrag_labels_col] for x in samples] if xrag_labels_col in samples[0].keys() else None,
         padding_side=llm_tokenizer.padding_side
     )
-
+    # print("after padding xrag_input_ids:")
+    # print(xrag_input_ids)
+    # print()
+    # print("after padding xrag_labels:")
+    # print(xrag_labels)
+    # print()
+    # print('created attention_mask:')
+    # print(xrag_attention_mask)
+    # print()
     ret = {
         "xrag_input_ids": xrag_input_ids.to('cuda:0'),  # token hasil embedding llm_tokenizer 
         "xrag_attention_mask": xrag_attention_mask.to('cuda:0'),  # memberi masking agar pad tidak dipelajari selama training
