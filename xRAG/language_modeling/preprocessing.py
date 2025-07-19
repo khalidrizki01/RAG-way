@@ -1,5 +1,7 @@
 import random, copy, torch
 from datasets import Dataset, load_from_disk, load_dataset
+import yaml
+from types import SimpleNamespace
 
 XRAG_TOKEN = "<xRAG>" 
 
@@ -18,6 +20,11 @@ ParaphraseInstructions = [
     "Hilangkan misterinya, dan kamu akan menemukan informasi: {xrag_token} hanyalah versi lain dari:",
     "Esensi dari konteks: {xrag_token} terulang lagi dalam pernyataan berikut:",
 ]
+
+def load_config(path):
+    with open(path, 'r') as f:
+        config_dict = yaml.safe_load(f)
+    return SimpleNamespace(**config_dict)
 
 def load_and_format_dataset(dataset_path, query_col, answer_col, psg_col, task_type, max_rows=None):
     """
