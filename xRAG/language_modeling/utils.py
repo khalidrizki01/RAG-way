@@ -1,4 +1,3 @@
-from preprocessing import get_retrieval_embeds
 from transformers import PreTrainedTokenizer, StoppingCriteria, StoppingCriteriaList
 from tqdm import tqdm
 import torch.nn.functional as F
