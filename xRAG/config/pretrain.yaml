@@ -16,7 +16,7 @@ alpha_nll: 1.0
 
 # retriever config
 retriever_name_or_path: "intfloat/multilingual-e5-small"
-retrieval_context_length: 512
+retrieval_context_length: 340
 
 # prompting config
 chat_format: "qwen"
