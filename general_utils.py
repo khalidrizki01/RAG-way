@@ -205,7 +205,7 @@ def generate_per_row(row, query_col, ctx_col, tokenizer, model, device_type, ins
                 return_dict_in_generate=True
             )
 
-    prompt_and_completion = outputs.sequences
+    # prompt_and_completion = outputs.sequences
     completion = outputs.sequences[:, inputs.shape[1]:]
 
     # decoded_output = tokenizer.decode(prompt_and_completion[0], skip_special_tokens=False)
