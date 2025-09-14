@@ -1,7 +1,3 @@
-# python train_summarizer.py --dataset_name khalidrizki/RECOMP-tuning --text_column passages --query_column query --summary_column final_summary --model_name_or_path google/flan-t5-base --seed 42 --num_train_epochs 3 --per_device_train_batch_size=4 --gradient_accumulation_steps=2 --per_device_eval_batch_size=32 --learning_rate 1e-5 --max_target_length 52 --output_dir ./models/ --logging_first_step True --do_train --do_eval --predict_with_generate  --save_total_limit 3
-
-# python train_summarizer.py --model_name_or_path ./models/-google-flan-t5-base-2025-06-09_19-36-13 --do_predict --dataset_name khalidrizki/RECOMP-tuning --max_target_length 52 --output_dir ./outputs/ --per_device_eval_batch_size=32 --predict_with_generate --text_column passages --query_column query --summary_column final_summary
-
 """
 Fine-tuning the library models for sequence to sequence.
 """
@@ -18,7 +14,7 @@ import json
 import random
 import datasets
 # import evaluate
-import nltk  # Here to have a nice missing dependency error message early on
+import nltk  
 import numpy as np
 from datasets import load_dataset, load_from_disk
 from filelock import FileLock
@@ -30,8 +26,6 @@ from transformers import (
     AutoTokenizer,
     DataCollatorForSeq2Seq,
     HfArgumentParser,
-    MBart50Tokenizer,
-    MBart50TokenizerFast,
     MBartTokenizer,
     MBartTokenizerFast,
     Seq2SeqTrainer,
@@ -500,7 +494,6 @@ def main():
         return
 
     # Get the column names for input/target.
-    dataset_columns = None
     if data_args.text_column is None:
         raise ValueError("Must include --text_column when starting the program")
     else:
@@ -755,12 +748,6 @@ def main():
         trainer.create_model_card(**kwargs)
 
     return results
-
-
-def _mp_fn(index):
-    # For xla_spawn (TPUs)
-    main()
-
 
 if __name__ == "__main__":
     main()
