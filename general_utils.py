@@ -272,3 +272,34 @@ def apply_similarity_ranking_to_dataset(
 
     dataset = dataset.add_column(output_col, ranked_units_all)
     return dataset
+
+import re
+
+def clean_parsoid_artifacts(text: str) -> str:
+    """
+    Bersihkan artefak Parsoid/HTML yang pecah, misal:
+    - data-parsoid='...'>s/u>
+    - d/b>eoxyribob data-parsoid='...'>n/b>ucleic a/b>cid
+
+    Langkah:
+      1) Hilangkan huruf tag tunggal (b|i|u|em|strong|span|a) yang muncul
+         PERSIS sebelum 'data-parsoid=' (representasi '<b', '<i', dst. yang kehilangan '<').
+      2) Hapus blok data-parsoid='...'>
+      3) Hapus fragmen penutup tag pecah: /b>, /i>, /u>, /em>, /strong>, /span>, /a>
+      4) Bersihkan spasi berlebih
+    """
+    # 1) buang huruf/tag tunggal yang berada tepat sebelum data-parsoid=
+    text = re.sub(r"\b(?:b|i|u|em|strong|span|a)\s+(?=data-parsoid=)", "", text, flags=re.IGNORECASE)
+
+    # 2) hapus keseluruhan blok data-parsoid='...'>
+    text = re.sub(r"\s*data-parsoid='[^']*'>", "", text, flags=re.IGNORECASE)
+
+    # 3) hapus penutup tag yang pecah (tidak ada '<')
+    text = re.sub(r"/(?:b|i|u|em|strong|span|a)>", "", text, flags=re.IGNORECASE)
+
+    # 3b) hapus karakter \u200e dan varian "‎\u200e;" jika ada
+    text = re.sub(r"[\u200e;]+", "", text)
+
+    # 4) rapikan spasi
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    return text
