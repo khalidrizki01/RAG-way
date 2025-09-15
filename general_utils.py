@@ -303,3 +303,30 @@ def clean_parsoid_artifacts(text: str) -> str:
     # 4) rapikan spasi
     text = re.sub(r"\s{2,}", " ", text).strip()
     return text
+
+def normalize_units(text: str) -> str:
+    """
+    Normalisasi angka + satuan agar konsisten:
+    - Hilangkan spasi antara angka dan satuan.
+    - Ubah superscript ² menjadi angka 2 biasa.
+    - Samakan variasi unit area (km², km2 -> km2, dst).
+    """
+    # Ganti superscript ² jadi 2 biasa
+    text = text.replace("²", "2")
+    
+    # Hilangkan spasi sebelum unit (misal "9.000 km2" -> "9.000km2")
+    text = re.sub(r"(\d)\s+(km2|m2|cm2)", r"\1\2", text, flags=re.IGNORECASE)
+    
+    # Samakan semua bentuk unit area jadi format baku
+    unit_map = {
+        "km2": "km2",
+        "km²": "km2",
+        "m2": "m2",
+        "m²": "m2",
+        "cm2": "cm2",
+        "cm²": "cm2",
+    }
+    for u_from, u_to in unit_map.items():
+        text = re.sub(u_from, u_to, text, flags=re.IGNORECASE)
+    
+    return text
