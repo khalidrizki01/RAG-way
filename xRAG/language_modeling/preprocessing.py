@@ -1,7 +1,8 @@
-import random, copy, torch
+import random, copy, torch, tqdm
 from datasets import Dataset, load_from_disk, load_dataset
 import yaml
 from types import SimpleNamespace
+from utils import stop_sequences_criteria
 
 XRAG_TOKEN = "<xRAG>" 
 
@@ -96,7 +97,7 @@ def process_pretrain_dataset(split_data, psg_col):
     for example in split_data:
         # Ambil background dan extend hasilnya ke dalam list of strings
         text = example[psg_col]  # .split('\n\n')
-        formatted_data['text'].extend(text)  # Menggunakan extend, bukan append
+        formatted_data['text'].append(text)  # Menggunakan extend, bukan append
     
     return formatted_data
 
@@ -413,3 +414,118 @@ def collator(samples,
         ret['labels'] = labels.to('cuda:0')
 
     return ret
+
+def load_xrag_dataset(test_path, test_split, background_col, retriever_name):
+    if test_path.startswith('khalidrizki'):
+        test_data = load_dataset(test_path)[test_split]   
+    else: 
+        test_data = load_from_disk(test_path)[test_split]
+
+    if retriever_name is not None and retriever_name.lower().startswith('intfloat/multilingual-e5'):
+        def add_passage_prefix(example):
+            example[background_col] = ["passage: " + x for x in example[background_col]]
+            return example
+        
+        test_data = test_data.map(add_passage_prefix)
+    return test_data
+
+def str_format(row, background_col, query_col):
+    prompt_template = "Rujuklah latar belakang: {background} Pertanyaan: {query}"
+    retrieval_embed_length = len(row[background_col])
+    background = " ".join([XRAG_TOKEN]*retrieval_embed_length)
+    prompt = prompt_template.format_map(dict(background=background, query=row[query_col].strip()))
+    return prompt
+
+def prepare_prompt(row, tokenizer, query_col, background_col):
+    prompt = str_format(
+        row, 
+        background_col, 
+        query_col
+    )
+
+    messages = [{'role':'user', 'content':prompt}]
+    prompt = _concat_messages_qwen(messages, tokenizer, add_generation_prompt=True)
+    return {'prompt':prompt}
+
+@torch.no_grad()
+def compute_retrieval_embeds_per_example(example, background_col, retriever, retriever_tokenizer):
+    passages = example[background_col]
+    
+    tokenized = retriever_tokenizer(
+        passages,
+        max_length=512,
+        padding=True,
+        truncation=True,
+        return_tensors="pt"
+    )
+    
+    input_ids = tokenized["input_ids"].to("cuda")
+    attention_mask = tokenized["attention_mask"].to("cuda")
+
+    # get embeddings: tensor [num_passages, dim]
+    embeds = get_retrieval_embeds(
+        retriever=retriever,
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+    ).cpu()
+
+    # convert each vector to list[float] for serialization
+    embed_list = [embed.tolist() for embed in embeds]
+
+    return {"retrieval_embeds": embed_list}
+
+from utils import stop_sequences_criteria
+from tqdm import tqdm
+import torch
+
+def llm_for_open_generation_dataset(
+    llm,
+    llm_tokenizer,
+    formatted_dataset,
+    batch_size=2,
+    enable_progress_bar=True,
+):
+    full_completion = []
+    
+    total_test_number = len(formatted_dataset)
+    device = llm.device
+
+    progress_bar = tqdm(range(0, total_test_number, batch_size), ncols=60, disable=not enable_progress_bar)
+
+    for start_idx in range(0, total_test_number, batch_size):
+        batch = formatted_dataset.select(range(start_idx, min(start_idx + batch_size, total_test_number)))
+
+        prompts = batch["prompt"]
+        tokenized_prompt = llm_tokenizer(prompts, padding='longest', return_tensors='pt', truncation=True, max_length=512)
+
+        input_ids = tokenized_prompt.input_ids.to(device)
+        attention_mask = tokenized_prompt.attention_mask.to(device)   
+
+        stopping_criteria = stop_sequences_criteria(llm_tokenizer, input_ids.shape[1], input_ids.shape[0])
+        retrieval_kwargs = {}
+
+        if "retrieval_embeds" in batch.column_names:
+            embeds_batch = batch["retrieval_embeds"]
+            # Flatten and convert to tensor
+            embeds = [torch.tensor(vec, dtype=torch.float32) for sublist in embeds_batch for vec in sublist]
+            embeds = torch.stack(embeds).to(device)
+            retrieval_kwargs["retrieval_embeds"] = embeds
+            stopping_criteria = stop_sequences_criteria(llm_tokenizer, 0, input_ids.shape[0])
+
+        with torch.no_grad():
+            generated_output = llm.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                # stopping_criteria=stopping_criteria,
+                do_sample=False,
+                max_new_tokens=52,
+                pad_token_id=llm_tokenizer.pad_token_id,
+                **retrieval_kwargs,
+            )
+
+        output = llm_tokenizer.batch_decode(generated_output, skip_special_tokens=True)
+        full_completion.extend([x.strip() for x in output])
+
+        progress_bar.update(batch_size)
+
+    return full_completion
