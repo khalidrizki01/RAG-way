@@ -1,4 +1,4 @@
-dataset_path : "khalidrizki/postretrieve-raw-dataset-v2"
+dataset_path : "khalidrizki/indonesian-wiki-chunked-180tok"
 query_col : 'query'
 ans_col : 'label'
 psg_col : 'sorted_truncPassages'
@@ -8,15 +8,15 @@ max_samples : null
 model_dtype : 'bfloat16'
 
 seed: 42
-per_device_train_batch_size: 2
-gradient_accumulation_steps: 8
+per_device_train_batch_size: 12
+gradient_accumulation_steps: 4
 lr_scheduler_type: "linear"
 warmup_ratio: 0.03
 alpha_nll: 1.0
 
 # retriever config
-retriever_name_or_path: "intfloat/multilingual-e5-small"
-retrieval_context_length: 340
+retriever_name_or_path: "intfloat/multilingual-e5-base"
+retrieval_context_length: 180
 
 # prompting config
 chat_format: "qwen"
@@ -33,9 +33,9 @@ processing_steps_output_dir: "../../generated_data/xRAG-process"
 # task config
 task_type: 'pretrain'
 model_name_or_path : "Qwen/Qwen3-1.7B"
-num_train_epochs : 10
-learning_rate : 0.05
+num_train_epochs : 1
+learning_rate : 6.0e-3
 alpha_kl : None
 kl_temperature : 0.0
-max_seq_length : 600
+max_seq_length : 336
 retrieval_embed_length : 1
