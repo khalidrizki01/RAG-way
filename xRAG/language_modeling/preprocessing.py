@@ -27,7 +27,7 @@ def load_config(path):
         config_dict = yaml.safe_load(f)
     return SimpleNamespace(**config_dict)
 
-def load_and_format_dataset(dataset_path, query_col, answer_col, psg_col, task_type, max_rows=None):
+def load_and_format_dataset(dataset_path, task_type,psg_col,query_col=None, answer_col=None, max_rows=None):
     """
     Mengubah format dari dataset raw ke format yang sesuai untuk xRAG
     """

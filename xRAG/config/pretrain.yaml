@@ -1,7 +1,7 @@
 dataset_path : "khalidrizki/indonesian-wiki-chunked-180tok"
-query_col : 'query'
-ans_col : 'label'
-psg_col : 'sorted_truncPassages'
+query_col : None
+ans_col : None
+psg_col : 'text'
 max_samples : null
 
 # model config
