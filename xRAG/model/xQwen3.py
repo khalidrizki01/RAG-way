@@ -1,5 +1,6 @@
 from transformers import Qwen3Config, Qwen3ForCausalLM
 import torch.nn as nn
+import time
 import torch
 import re
 
@@ -7,7 +8,7 @@ class XQwen3Config(Qwen3Config):
     def __init__(
         self,
         projector_type = 'mlp2x_gelu',
-        retriever_hidden_size = 384,
+        retriever_hidden_size = 1024,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -110,6 +111,7 @@ class XQwen3ForCausalLM(Qwen3ForCausalLM):
         self,
         input_ids=None,
         retrieval_embeds=None,
+        return_projected_time=False,
         **kwargs,
     ):
 
@@ -123,11 +125,22 @@ class XQwen3ForCausalLM(Qwen3ForCausalLM):
             input_ids = None
             if attention_mask is not None:
                 assert inputs_embeds.shape[1] == attention_mask.shape[1], (inputs_embeds.shape, attention_mask.shape)
-            return super().generate(
-                attention_mask=attention_mask,
-                inputs_embeds=inputs_embeds,
-                **kwargs
-            )
+            if return_projected_time: 
+                projection_finished_at = time.perf_counter()
+                return {
+                    'projection_finished_time' : projection_finished_at, 
+                    'prediction': super().generate(
+                        attention_mask=attention_mask,
+                        inputs_embeds=inputs_embeds,
+                        **kwargs
+                    )
+                }
+            else: 
+                return super().generate(
+                    attention_mask=attention_mask,
+                    inputs_embeds=inputs_embeds,
+                    **kwargs
+                )
         
         else:
             return super().generate(

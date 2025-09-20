@@ -15,7 +15,7 @@ warmup_ratio: 0.03
 alpha_nll: 1.0
 
 # retriever config
-retriever_name_or_path: "intfloat/multilingual-e5-base"
+retriever_name_or_path: "intfloat/multilingual-e5-large"
 retrieval_context_length: 180
 
 # prompting config
