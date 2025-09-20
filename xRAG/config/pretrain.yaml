@@ -1,4 +1,4 @@
-dataset_path : "khalidrizki/indonesian-wiki-chunked-180tok"
+dataset_path : "khalidrizki/indonesian-wiki-chunked-180tok-splitted"
 query_col : None
 ans_col : None
 psg_col : 'text'
